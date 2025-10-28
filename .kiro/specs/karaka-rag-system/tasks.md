@@ -26,7 +26,7 @@
   - Add retry logic with exponential backoff for throttling
   - _Requirements: 9.2, 9.3, 9.4_
 
-- [ ] 4. Implement Neo4j Client
+- [x] 4. Implement Neo4j Client
   - Create `src/graph/neo4j_client.py`
   - Implement `create_entity(canonical_name, aliases, document_ids)` with MERGE (creates entity ONCE)
   - Implement `add_entity_alias(canonical_name, alias, document_id)` to update existing entity
