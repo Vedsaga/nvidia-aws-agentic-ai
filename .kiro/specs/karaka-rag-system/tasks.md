@@ -215,7 +215,7 @@
   - Stop polling when status is completed or failed
   - _Requirements: 4.2, 4.3_
 
-- [ ] 22. Build Query Interface Component
+- [x] 22. Build Query Interface Component
   - Create `frontend/src/components/QueryInterface.jsx`
   - Text input for natural language question
   - Submit button calling POST /query API

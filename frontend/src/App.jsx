@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import DocumentUpload from './components/DocumentUpload'
 import ProgressTracker from './components/ProgressTracker'
+import QueryInterface from './components/QueryInterface'
 
 function App() {
   const [currentJobId, setCurrentJobId] = useState(null);
@@ -29,6 +30,8 @@ function App() {
           }}
         />
       )}
+      
+      <QueryInterface />
     </div>
   )
 }
