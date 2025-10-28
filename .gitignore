@@ -1,3 +1,67 @@
-nvidia-aws-agentic-ai-hackathon-plan.md
-*.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Environment variables
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 .kiro_command_output.txt
+
+# AWS
+lambda.zip
+package/
+*.pem
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# spaCy models
+en_core_web_sm/
+
+# Neo4j
+.neo4j/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Deployment artifacts
+infrastructure/*.zip
+infrastructure/package/
