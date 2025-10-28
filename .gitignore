@@ -37,6 +37,7 @@ env/
 *.swo
 *~
 .kiro_command_output.txt
+.kiro_command_output.tmp
 
 # AWS
 lambda.zip

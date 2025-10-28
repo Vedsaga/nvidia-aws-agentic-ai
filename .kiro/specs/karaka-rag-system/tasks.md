@@ -36,7 +36,7 @@
   - Implement `get_graph_for_visualization()` returning nodes and edges
   - _Requirements: 3.7, 3.8, 7.1, 7.2, 8.2, 8.3, 8.4, 9.5_
 
-- [ ] 5. Implement SRL Parser
+- [x] 5. Implement SRL Parser
   - Create `src/ingestion/srl_parser.py`
   - Load spaCy model `en_core_web_sm`
   - Implement `parse_line(line)` returning List[(verb, {role: entity})] for multiple verbs per line
