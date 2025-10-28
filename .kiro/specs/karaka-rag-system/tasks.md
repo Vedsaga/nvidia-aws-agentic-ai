@@ -136,7 +136,7 @@
   - Handle errors and return appropriate error responses
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.1, 9.3, 9.4, 9.5, 9.7_
 
-- [ ] 14. Implement Status and Graph Lambda Handlers
+- [x] 14. Implement Status and Graph Lambda Handlers
   - Create `lambda/status_handler.py` to retrieve job status from S3
   - Parse job_id from API Gateway path parameters
   - Read job status JSON from S3 (includes line_text for each processed line)
