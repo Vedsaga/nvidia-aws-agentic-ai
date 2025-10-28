@@ -176,7 +176,7 @@
   - Output API Gateway URL
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.3, 10.7_
 
-- [-] 18. Create Deployment Orchestration Script
+- [x] 18. Create Deployment Orchestration Script
   - Create `infrastructure/deploy.sh` bash script
   - Check for .env file and load environment variables
   - Create S3 bucket for job tracking
