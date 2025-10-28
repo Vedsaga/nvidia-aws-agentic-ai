@@ -125,7 +125,7 @@
   - Return job_id and status
   - _Requirements: 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5, 9.1, 9.2, 9.5, 9.6, 9.7, 10.2_
 
-- [] 13. Implement Query Lambda Handler
+- [x] 13. Implement Query Lambda Handler
   - Create `lambda/query_handler.py`
   - Parse API Gateway event for question, min_confidence, document_filter
   - Call query decomposer to analyze question

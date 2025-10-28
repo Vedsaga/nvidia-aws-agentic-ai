@@ -24,14 +24,14 @@ class QueryDecomposer:
         'APADANA'       # Source - From where? From whom?
     ]
     
-    def __init__(self, nim_client: Optional[NIMClient] = None):
+    def __init__(self, nim_client: NIMClient):
         """
         Initialize Query Decomposer.
         
         Args:
-            nim_client: NIM client for calling Nemotron (creates new if None)
+            nim_client: NIM client for calling Nemotron
         """
-        self.nim_client = nim_client or NIMClient()
+        self.nim_client = nim_client
         logger.info("Initialized Query Decomposer")
     
     def decompose(self, question: str) -> Dict[str, Any]:
