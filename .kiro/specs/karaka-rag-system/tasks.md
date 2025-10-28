@@ -199,7 +199,7 @@
   - Configure API_GATEWAY_URL from environment
   - _Requirements: 11.1_
 
-- [ ] 20. Build Document Upload Component
+- [x] 20. Build Document Upload Component
   - Create `frontend/src/components/DocumentUpload.jsx`
   - File input for text document selection
   - Upload button calling POST /ingest API
