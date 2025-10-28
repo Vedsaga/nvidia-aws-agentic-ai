@@ -2,46 +2,46 @@
 
 ## ⚠️ CRITICAL: Kriya-Centric Architecture
 
-**The Kriya (Action) is the center. All relationships point FROM Action TO Entity.**
+**The Kriya (क्रिया - verb/action) is the center. All Kāraka relationships point FROM Kriya TO Pada (entity).**
 
 ### ✅ CORRECT
 ```
-(Action)-[KARTA]->(Entity)
-(Action)-[KARMA]->(Entity)
+(Kriya)-[KARTA]->(Pada)
+(Kriya)-[KARMA]->(Pada)
 ```
 
 ### ❌ WRONG
 ```
-(Entity)-[KARTA]->(Action)  // NEVER DO THIS!
+(Pada)-[KARTA]->(Kriya)  // NEVER DO THIS!
 ```
 
 ## Schema Diagram
 
 ```mermaid
 graph LR
-    subgraph "Entity Node (Created ONCE per unique entity)"
-        E1[Entity<br/>canonical_name: String<br/>aliases: List<br/>document_ids: List<br/>embedding: Vector<br/>created_at: Timestamp]
+    subgraph "Pada Node (Created ONCE per unique entity)"
+        E1[Pada Entity<br/>canonical_name: String<br/>aliases: List<br/>document_ids: List<br/>embedding: Vector<br/>created_at: Timestamp]
     end
 
-    subgraph "Action Node (Center of Graph)"
-        A1[Action<br/>id: String<br/>verb: String<br/>sentence: String<br/>sentence_id: Integer<br/>line_number: Integer<br/>document_id: String<br/>created_at: Timestamp]
+    subgraph "Kriya Node (Center of Graph)"
+        A1[Kriya क्रिया<br/>id: String<br/>verb: String<br/>line_number: Integer<br/>action_sequence: Integer<br/>document_id: String<br/>created_at: Timestamp]
     end
 
-    subgraph "Kāraka Relationships (Action → Entity)"
-        R1[KARTA - Agent<br/>Who does?]
-        R2[KARMA - Patient<br/>What is done?]
-        R3[KARANA - Instrument<br/>By what means?]
-        R4[SAMPRADANA - Recipient<br/>For whom?]
-        R5[ADHIKARANA - Location<br/>Where?]
-        R6[APADANA - Source<br/>From where?]
+    subgraph "Kāraka Relationships (Kriya → Pada)"
+        R1[KARTA कर्ता<br/>Agent - Who does?]
+        R2[KARMA कर्म<br/>Patient - What is done?]
+        R3[KARANA करण<br/>Instrument - By what means?]
+        R4[SAMPRADANA सम्प्रदान<br/>Recipient - For whom?]
+        R5[ADHIKARANA अधिकरण<br/>Location - Where?]
+        R6[APADANA अपादान<br/>Source - From where?]
     end
 
-    A1 -->|KARTA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
-    A1 -->|KARMA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
-    A1 -->|KARANA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
-    A1 -->|SAMPRADANA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
-    A1 -->|ADHIKARANA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
-    A1 -->|APADANA<br/>confidence: Float<br/>source_sentence_id: Int<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|KARTA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|KARMA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|KARANA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|SAMPRADANA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|ADHIKARANA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
+    A1 -->|APADANA<br/>confidence: Float<br/>line_number: Int<br/>document_id: String| E1
 
     style E1 fill:#e1f5ff
     style A1 fill:#fff4e6
@@ -55,90 +55,92 @@ graph LR
 
 ## Key Principles
 
-### 1. Entity Node Reuse
-**Each unique entity is created ONCE, then reused.**
+### 1. Pada (Entity) Node Reuse
+**Each unique pada is created ONCE, then reused.**
 
-Example: "Rama" appears 6 times → 1 entity node with 6 incoming relationships
+Example: "Rama" appears 6 times → 1 pada node with 6 incoming Kāraka relationships
 
 ```cypher
-// ONE entity node
-(:Entity {canonical_name: 'Rama', aliases: ['Rama', 'he']})
+// ONE pada node
+(:Pada {canonical_name: 'Rama', aliases: ['Rama', 'he']})
 
-// MULTIPLE relationships to same node
-(action_0)-[:SAMPRADANA]->(Rama)
-(action_1)-[:KARTA]->(Rama)
-(action_3)-[:KARTA]->(Rama)
+// MULTIPLE Kāraka relationships to same node
+(kriya_0)-[:SAMPRADANA]->(Rama)
+(kriya_1)-[:KARTA]->(Rama)
+(kriya_3)-[:KARTA]->(Rama)
 ```
 
-### 2. No Direct Entity Connections
-Entities are NEVER directly connected. Only through actions.
+### 2. No Direct Pada Connections
+Padas are NEVER directly connected. Only through Kriyas.
 
 ```
 ❌ WRONG: (Rama)-[:KNOWS]->(Lakshmana)
-✅ CORRECT: (knows:Action)-[:KARTA]->(Rama)
-            (knows:Action)-[:KARMA]->(Lakshmana)
+✅ CORRECT: (knows:Kriya)-[:KARTA]->(Rama)
+            (knows:Kriya)-[:KARMA]->(Lakshmana)
 ```
 
 ### 3. Multi-Hop Reasoning
-Traverse through action chains to trace relationships.
+Traverse through Kriya chains to trace relationships.
 
 ```cypher
 // From where did Rama get the bow?
-MATCH (a:Action)-[:SAMPRADANA]->(rama:Entity {canonical_name: 'Rama'})
-MATCH (a)-[:KARMA]->(bow:Entity {canonical_name: 'bow'})
-MATCH (a)-[:KARTA]->(giver:Entity)
+MATCH (k:Kriya)-[:SAMPRADANA]->(rama:Pada {canonical_name: 'Rama'})
+MATCH (k)-[:KARMA]->(bow:Pada {canonical_name: 'bow'})
+MATCH (k)-[:KARTA]->(giver:Pada)
 RETURN giver.canonical_name
 ```
 
 ### 4. Temporal Ordering
-Use sentence_id for chronological ordering.
+Use line_number for chronological ordering.
 
 ```cypher
 // What happened to the bow? (chronological)
-MATCH (a:Action)-[r]->(bow:Entity {canonical_name: 'bow'})
-RETURN a.verb, type(r), a.sentence
-ORDER BY a.sentence_id
+MATCH (k:Kriya)-[r]->(bow:Pada {canonical_name: 'bow'})
+RETURN k.verb, type(r)
+ORDER BY k.line_number, k.action_sequence
 ```
 
 ## Cypher Examples
 
-### Create Entity (Once)
+### Create Pada (Once)
 ```cypher
-MERGE (e:Entity {canonical_name: 'Rama'})
+MERGE (p:Pada {canonical_name: 'Rama'})
 ON CREATE SET 
-  e.aliases = ['Rama'],
-  e.document_ids = ['doc_123'],
-  e.embedding = $embedding,
-  e.created_at = timestamp()
+  p.aliases = ['Rama'],
+  p.document_ids = ['doc_123'],
+  p.embedding = $embedding,
+  p.created_at = timestamp()
 ON MATCH SET
-  e.aliases = e.aliases + 'he',
-  e.document_ids = CASE 
-    WHEN 'doc_123' IN e.document_ids THEN e.document_ids 
-    ELSE e.document_ids + 'doc_123' 
+  p.aliases = p.aliases + 'he',
+  p.document_ids = CASE 
+    WHEN 'doc_123' IN p.document_ids THEN p.document_ids 
+    ELSE p.document_ids + 'doc_123' 
   END
 ```
 
-### Create Action and Relationships
+### Create Kriya and Kāraka Relationships
 ```cypher
-// Create action
-CREATE (a:Action {
-  id: 'action_0',
+// Create Kriya (NO sentence text stored)
+CREATE (k:Kriya {
+  id: 'kriya_0',
   verb: 'gave',
-  sentence: 'Rama gave bow to Lakshmana',
-  sentence_id: 0,
   line_number: 1,
-  document_id: 'doc_123'
+  action_sequence: 0,  // Order within line if multiple verbs
+  document_id: 'doc_123',
+  created_at: timestamp()
 })
 
-// Link to existing entities (Action → Entity)
-MATCH (a:Action {id: 'action_0'})
-MATCH (rama:Entity {canonical_name: 'Rama'})
-CREATE (a)-[:KARTA {confidence: 0.95, source_sentence_id: 0, line_number: 1}]->(rama)
+// Link to existing padas (Kriya → Pada via Kāraka)
+MATCH (k:Kriya {id: 'kriya_0'})
+MATCH (rama:Pada {canonical_name: 'Rama'})
+CREATE (k)-[:KARTA {confidence: 0.95, line_number: 1}]->(rama)
 
-MATCH (a:Action {id: 'action_0'})
-MATCH (bow:Entity {canonical_name: 'bow'})
-CREATE (a)-[:KARMA {confidence: 0.95, source_sentence_id: 0, line_number: 1}]->(bow)
+MATCH (k:Kriya {id: 'kriya_0'})
+MATCH (bow:Pada {canonical_name: 'bow'})
+CREATE (k)-[:KARMA {confidence: 0.95, line_number: 1}]->(bow)
 ```
+
+**Note:** Sentence text is NOT stored in nodes. Retrieve from original document using document_id + line_number when needed for display.
 
 ### Query Pattern
 ```cypher
@@ -147,5 +149,28 @@ MATCH (a:Action)-[:KARTA]->(giver:Entity)
 WHERE a.verb = 'gave'
 MATCH (a)-[:KARMA]->(bow:Entity {canonical_name: 'bow'})
 MATCH (a)-[:SAMPRADANA]->(recipient:Entity {canonical_name: 'Lakshmana'})
-RETURN giver.canonical_name, a.sentence, a.line_number
+RETURN giver.canonical_name, a.document_id, a.line_number
+
+// Retrieve sentence text separately from document storage
+// using document_id + line_number
 ```
+
+### Multiple Kriyas in One Sentence
+
+**Example:** "She called her team, scheduled a meeting, and sent an email."
+
+**Graph Structure:**
+```cypher
+// Line 5 has 3 verbs → Create 3 action nodes
+
+CREATE (a1:Action {id: 'action_5_0', verb: 'called', line_number: 5, action_sequence: 0, document_id: 'doc_123'})
+CREATE (a2:Action {id: 'action_5_1', verb: 'scheduled', line_number: 5, action_sequence: 1, document_id: 'doc_123'})
+CREATE (a3:Action {id: 'action_5_2', verb: 'sent', line_number: 5, action_sequence: 2, document_id: 'doc_123'})
+
+// All link to same "she" entity
+(a1)-[:KARTA]->(she)
+(a2)-[:KARTA]->(she)
+(a3)-[:KARTA]->(she)
+```
+
+**Key:** Multiple actions can share same line_number. Use action_sequence to distinguish order within the line.

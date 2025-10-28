@@ -17,15 +17,18 @@ sequenceDiagram
     Frontend->>API Gateway: POST /ingest
     API Gateway->>Lambda: Invoke ingestion handler
     Lambda->>Lambda: Generate job_id, document_id
-    Lambda->>Lambda: Split into sentences
+    Lambda->>Lambda: Split into lines
+    Note over Lambda: Each line may contain<br/>multiple verbs (Kriyas)<br/>Creates multiple action nodes
     Lambda->>S3: Create job status
     Lambda-->>Frontend: Return job_id
 
-    loop For each sentence
-        Lambda->>SRL Parser: Parse sentence
-        SRL Parser-->>Lambda: verb, {role: entity}
-        Lambda->>Kāraka Mapper: Map SRL to Kāraka
-        Kāraka Mapper-->>Lambda: {KARTA: entity, KARMA: entity}
+    loop For each line
+        Lambda->>SRL Parser: Parse line (may have multiple verbs)
+        SRL Parser-->>Lambda: verbs[], {role: entity} for each verb
+        
+        loop For each verb in line
+            Lambda->>Kāraka Mapper: Map SRL to Kāraka
+            Kāraka Mapper-->>Lambda: {KARTA: entity, KARMA: entity}
         
         loop For each entity
             Lambda->>Entity Resolver: Resolve entity
@@ -38,13 +41,16 @@ sequenceDiagram
             Entity Resolver-->>Lambda: Canonical name
         end
 
-        Lambda->>Neo4j: Create action node
-        Lambda->>Neo4j: Create Kāraka relationships
+            Lambda->>Neo4j: Create action node (no sentence text)
+            Lambda->>Neo4j: Create Kāraka relationships
+        end
         
-        alt Every 10 sentences
+        alt Every 10 lines
             Lambda->>S3: Update progress
         end
     end
+    
+    Note over Lambda,Neo4j: Sentence text NOT stored in graph<br/>Retrieved from document using<br/>document_id + line_number
 
     Lambda->>S3: Mark job completed
     Lambda->>S3: Save statistics

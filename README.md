@@ -7,11 +7,11 @@ High-level system overview showing AWS components, data flow, and deployment arc
 
 ### 2. neo4j-schema.md ⭐ CRITICAL
 **Core graph structure with all architectural principles:**
-- Kriya-centric design (Action → Entity)
-- Entity node reuse (one node, multiple relationships)
-- No direct entity connections
+- Kriya-centric design (Kriya → Pada)
+- Pada node reuse (one node, multiple Kāraka relationships)
+- No direct pada connections
 - Multi-hop reasoning examples
-- Cypher query patterns
+- Cypher query patterns with Sanskrit terminology
 - Correct vs wrong patterns
 
 ### 3. ingestion-flow.md
@@ -53,13 +53,26 @@ SRL to Kāraka role mapping:
 - No-answer scenario
 - Temporal ordering
 
+
+
 ## Quick Reference
 
-**Graph Direction:** `(Action)-[KARAKA]->(Entity)` ✅  
-**Entity Creation:** Once per unique entity, then reuse  
-**No Direct Links:** Entities only connect through actions  
+**Graph Direction:** `(Kriya)-[KARAKA]->(Pada)` ✅  
+**Pada Creation:** Once per unique entity, then reuse  
+**No Direct Links:** Padas only connect through Kriyas  
 **No Hallucination:** Return NULL when no answer exists  
-**Source Tracking:** sentence_id, line_number, document_id  
+**Source Tracking:** line_number, action_sequence, document_id  
+**Sentence Text:** NOT stored in graph, retrieved from document when needed
+
+**Sanskrit Terms:**
+- Kriya (क्रिया) = Verb/Action (center of graph)
+- Pada (पद) = Entity
+- Karta (कर्ता) = Agent
+- Karma (कर्म) = Patient/Object
+- Karana (करण) = Instrument
+- Sampradana (सम्प्रदान) = Recipient
+- Adhikarana (अधिकरण) = Location
+- Apadana (अपादान) = Source  
 
 ## Implementation Priority
 

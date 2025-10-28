@@ -15,14 +15,14 @@ flowchart TD
     E_Ravana[Entity: Ravana<br/>ONE NODE]
 
     %% Action Nodes
-    A0[Action: presented<br/>sentence_id: 0<br/>line: 1]
-    A1[Action: accepted<br/>sentence_id: 1<br/>line: 2]
-    A2[Action: found<br/>sentence_id: 2<br/>line: 3]
-    A3[Action: gave<br/>sentence_id: 3<br/>line: 4]
-    A4[Action: arrived<br/>sentence_id: 4<br/>line: 5]
-    A5[Action: advised<br/>sentence_id: 5<br/>line: 6]
-    A6[Action: presented<br/>sentence_id: 6<br/>line: 7]
-    A7[Action: kill<br/>sentence_id: 7<br/>line: 8]
+    A0[Action: presented<br/>line: 1, seq: 0]
+    A1[Action: accepted<br/>line: 2, seq: 0]
+    A2[Action: found<br/>line: 3, seq: 0]
+    A3[Action: gave<br/>line: 4, seq: 0]
+    A4[Action: arrived<br/>line: 5, seq: 0]
+    A5[Action: advised<br/>line: 6, seq: 0]
+    A6[Action: presented<br/>line: 7, seq: 0]
+    A7[Action: kill<br/>line: 8, seq: 0]
 
     %% Sentence 0: Shiva presented Pinaka to Rama
     A0 -->|KARTA| E_Shiva
@@ -112,7 +112,8 @@ The SAME Rama entity node has:
 - Rama is KARMA in sentence 5 (patient)
 
 ### 6. Temporal Flow
-- sentence_id provides chronological ordering (0-7)
+- line_number provides chronological ordering (1-8)
+- action_sequence orders multiple verbs within same line
 - Can trace object movement through time
 - Can answer "who has X now?"
 
@@ -129,9 +130,11 @@ MATCH (a:Action)-[:KARTA]->(giver:Entity)
 WHERE a.verb IN ['gave', 'presented']
 MATCH (a)-[:KARMA]->(pinaka:Entity {canonical_name: 'Pinaka'})
 MATCH (a)-[:SAMPRADANA]->(rama:Entity {canonical_name: 'Rama'})
-RETURN giver.canonical_name, a.sentence, a.line_number
+RETURN giver.canonical_name, a.document_id, a.line_number
+
+// Retrieve sentence text separately from document storage
 ```
-**Answer:** Shiva (Line 1)
+**Answer:** Shiva (document: doc_123, line: 1)
 
 ### Query 2: What weapon did Rama use to kill Ravana?
 ```cypher
