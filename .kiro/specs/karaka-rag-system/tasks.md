@@ -19,7 +19,7 @@
 
 ## Phase 2: Core Processing Components
 
-- [ ] 3. Implement NIM Client
+- [x] 3. Implement NIM Client
   - Create `src/utils/nim_client.py`
   - Implement `call_nemotron()` using boto3 sagemaker-runtime for text generation
   - Implement `get_embedding()` using boto3 sagemaker-runtime for embeddings

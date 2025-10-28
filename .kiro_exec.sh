@@ -11,7 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ALWAYS write to workspace root, regardless of where command is run from
 OUTPUT_FILE="$SCRIPT_DIR/.kiro_command_output.txt"
 TEMP_FILE="$SCRIPT_DIR/.kiro_command_output.tmp"
-MAX_LINES=1000  # Limit output to prevent token waste
+MAX_LINES=100  # Limit output to prevent token waste
 
 # Validate command exists
 if [ $# -eq 0 ]; then
