@@ -80,14 +80,14 @@
 
 ## Phase 3: Query Pipeline
 
-- [-] 9. Implement Query Decomposer
+- [x] 9. Implement Query Decomposer
   - Create `src/query/decomposer.py`
   - Implement `decompose(question)` using Nemotron NIM
   - Build prompt template for query analysis identifying target Kāraka, constraints, and verb
   - Parse LLM response to extract target_karaka, constraints dict, and verb
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [x] 10. Implement Cypher Generator
+- [ ] 10. Implement Cypher Generator
   - Create `src/query/cypher_generator.py`
   - Implement `generate(decomposition, min_confidence, document_filter)` returning Cypher query
   - Build MATCH pattern with CORRECT direction: (Action)-[KARAKA]->(Entity)
