@@ -166,7 +166,7 @@
   - Output endpoint names for .env configuration
   - _Requirements: 1.2, 1.3, 1.4, 10.1_
 
-- [ ] 17. Create API Gateway Deployment Script
+- [x] 17. Create API Gateway Deployment Script
   - Create `infrastructure/deploy_api_gateway.py`
   - Use boto3 to create REST API named 'karaka-rag-api'
   - Create resources and methods: POST /ingest, GET /ingest/status/{job_id}, POST /query, GET /graph
@@ -176,7 +176,7 @@
   - Output API Gateway URL
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.3, 10.7_
 
-- [ ] 18. Create Deployment Orchestration Script
+- [-] 18. Create Deployment Orchestration Script
   - Create `infrastructure/deploy.sh` bash script
   - Check for .env file and load environment variables
   - Create S3 bucket for job tracking
