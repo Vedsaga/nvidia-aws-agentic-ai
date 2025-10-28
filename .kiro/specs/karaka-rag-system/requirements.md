@@ -141,12 +141,14 @@ This multi-hop reasoning is only possible because the Kriya is the center that b
 
 1. WHEN the User uploads a Document, THE System SHALL accept text files in plain text format
 2. WHEN the System receives a Document, THE System SHALL assign a unique document identifier
-3. WHEN the System receives a Document, THE System SHALL split the Document into individual Sentences
-4. WHEN the System processes Sentences, THE System SHALL extract semantic roles using spaCy SRL
+3. WHEN the System receives a Document, THE System SHALL split the Document into individual lines
+4. WHEN the System processes lines, THE System SHALL extract semantic roles for ALL verbs in each line using spaCy SRL
 5. WHEN the System extracts semantic roles, THE System SHALL map SRL roles to Kāraka types
 6. WHEN the System identifies Entities, THE System SHALL call the SageMaker Embedding NIM endpoint to get embedding vectors
-7. WHEN the System resolves Entities, THE System SHALL create Entity nodes in Neo4j with document source tracking
-8. WHEN the System creates Graph nodes, THE System SHALL create Kāraka-typed relationships with Confidence Scores and document IDs
+7. WHEN the System resolves Entities, THE System SHALL create Entity nodes ONCE in Neo4j and reuse them across multiple actions
+8. WHEN the System creates Graph nodes, THE System SHALL create Action nodes with line_number and action_sequence (NO sentence text stored)
+9. WHEN the System creates Kāraka relationships, THE System SHALL create relationships FROM Action TO Entity with confidence, line_number, and document_id
+10. WHEN the System stores document data, THE System SHALL store document content in S3 for later line text retrieval
 
 ### Requirement 4: Progress Tracking
 
@@ -155,10 +157,11 @@ This multi-hop reasoning is only possible because the Kriya is the center that b
 #### Acceptance Criteria
 
 1. WHEN the System begins processing a Document, THE System SHALL generate a unique job identifier
-2. WHEN the System processes Sentences, THE System SHALL update progress status in S3 after every 10 Sentences
+2. WHEN the System processes lines, THE System SHALL update progress status in S3 after every 10 lines with line_text and actions array
 3. WHEN the User requests job status via API, THE System SHALL retrieve status from S3 and return progress percentage
 4. WHEN the System completes Document processing, THE System SHALL mark the job status as completed in S3
 5. WHEN the System encounters processing errors, THE System SHALL record error details in the job status
+6. WHEN the System stores job status, THE System SHALL include document content for later line text retrieval
 
 ### Requirement 5: Entity Resolution with Document Tracking
 
@@ -166,12 +169,12 @@ This multi-hop reasoning is only possible because the Kriya is the center that b
 
 #### Acceptance Criteria
 
-1. WHEN the System encounters an Entity mention, THE System SHALL check if the Entity exists in Neo4j
+1. WHEN the System encounters an Entity mention, THE System SHALL check in-memory cache first, then Neo4j by canonical_name or aliases
 2. WHEN the Entity is not found, THE System SHALL call the SageMaker Embedding NIM endpoint to compute an embedding vector
 3. WHEN the System computes an embedding, THE System SHALL compare the embedding to existing canonical Entity embeddings in Neo4j
-4. WHEN the similarity score exceeds the threshold of 0.85, THE System SHALL resolve the mention to the canonical Entity
+4. WHEN the similarity score exceeds the threshold of 0.85, THE System SHALL resolve the mention to the canonical Entity and add alias and document_id (NOT create duplicate)
 5. WHEN the similarity score is below the threshold, THE System SHALL create a new canonical Entity entry in Neo4j
-6. WHEN the System resolves an Entity, THE System SHALL add the mention as an alias and store the source document ID
+6. WHEN the System resolves an Entity, THE System SHALL ensure each unique entity is created ONCE and reused across multiple actions
 7. WHEN the System creates Entity nodes, THE System SHALL store a list of document identifiers where that Entity appears
 8. WHEN multiple documents contain the same Entity name with different contexts, THE System SHALL create separate Entity nodes with document-specific disambiguation
 
@@ -183,12 +186,13 @@ This multi-hop reasoning is only possible because the Kriya is the center that b
 
 1. WHEN the User submits a Query, THE System SHALL call the SageMaker Nemotron NIM endpoint to decompose the Query into target Kāraka and constraints
 2. WHEN the System decomposes a Query, THE System SHALL identify which Kāraka role is being requested (KARTA, KARMA, etc.)
-3. WHEN the System identifies Query constraints, THE System SHALL generate a Cypher query for Neo4j Graph traversal
+3. WHEN the System identifies Query constraints, THE System SHALL generate a Cypher query with CORRECT direction: (Action)-[KARAKA]->(Entity)
 4. WHEN the System generates a Cypher query, THE System SHALL filter results by minimum Confidence Score
-5. WHEN the System executes the Cypher query against Neo4j, THE System SHALL retrieve matching Entities, Actions, and source Sentences
-6. WHEN the System retrieves Graph results, THE System SHALL call the SageMaker Nemotron NIM endpoint to synthesize a natural language answer
-7. WHEN the System generates an answer, THE System SHALL include source citations with Confidence Scores and document sources
-8. WHERE the User specifies a document filter, THE System SHALL restrict query results to the specified document
+5. WHEN the System executes the Cypher query against Neo4j, THE System SHALL retrieve matching Entities, Actions, line_numbers, and document_ids (NOT sentence text from graph)
+6. WHEN the System retrieves Graph results, THE System SHALL retrieve line text from S3 using document_id + line_number
+7. WHEN the System retrieves Graph results, THE System SHALL call the SageMaker Nemotron NIM endpoint to synthesize a natural language answer
+8. WHEN the System generates an answer, THE System SHALL include source citations with line_text, line_number, Confidence Scores and document sources
+9. WHERE the User specifies a document filter, THE System SHALL restrict query results to the specified document
 
 ### Requirement 7: Graph Visualization
 

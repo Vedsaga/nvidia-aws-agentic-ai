@@ -28,9 +28,10 @@
 
 - [ ] 4. Implement Neo4j Client
   - Create `src/graph/neo4j_client.py`
-  - Implement `create_entity(canonical_name, aliases, document_ids)` with MERGE
-  - Implement `create_action(action_id, verb, sentence, sentence_id, document_id)`
-  - Implement `create_karaka_relationship(entity, karaka_type, action, confidence, document_id)`
+  - Implement `create_entity(canonical_name, aliases, document_ids)` with MERGE (creates entity ONCE)
+  - Implement `add_entity_alias(canonical_name, alias, document_id)` to update existing entity
+  - Implement `create_action(action_id, verb, line_number, action_sequence, document_id)` (NO sentence text)
+  - Implement `create_karaka_relationship(action_id, karaka_type, entity_name, confidence, line_number, document_id)` with CORRECT direction: Action -> Entity
   - Implement `execute_query(cypher, params)` for arbitrary queries
   - Implement `get_graph_for_visualization()` returning nodes and edges
   - _Requirements: 3.7, 3.8, 7.1, 7.2, 8.2, 8.3, 8.4, 9.5_
@@ -38,9 +39,9 @@
 - [ ] 5. Implement SRL Parser
   - Create `src/ingestion/srl_parser.py`
   - Load spaCy model `en_core_web_sm`
-  - Implement `parse_sentence(sentence)` returning (verb, {role: entity})
-  - Extract main verb from ROOT dependency
-  - Extract semantic roles: nsubj, obj, iobj, obl (with preposition variants)
+  - Implement `parse_line(line)` returning List[(verb, {role: entity})] for multiple verbs per line
+  - Extract all verbs from dependency tree (handles multiple verbs per line)
+  - Extract semantic roles for each verb: nsubj, obj, iobj, obl (with preposition variants)
   - Implement `_get_noun_phrase()` to extract full noun phrases with modifiers
   - _Requirements: 3.4_
 
@@ -53,24 +54,26 @@
 - [ ] 7. Implement Entity Resolver
   - Create `src/ingestion/entity_resolver.py`
   - Implement `resolve_entity(entity_mention, document_id)` returning canonical name
-  - Check entity cache for existing entities and aliases
+  - Use in-memory cache to ensure each entity is created ONCE per document processing
+  - Check Neo4j for existing entities by canonical_name or aliases
   - Call NIM client to get embedding for new mentions
   - Calculate cosine similarity with existing entity embeddings
-  - Merge entities if similarity > 0.85, otherwise create new entity
-  - Track document IDs for each entity
+  - If similarity > 0.85, add alias and document_id to existing entity (do NOT create duplicate)
+  - Otherwise create new entity with document_id
   - _Requirements: 3.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 8.2, 8.8_
 
 - [ ] 8. Implement Graph Builder
   - Create `src/ingestion/graph_builder.py`
-  - Implement `process_sentence(sentence, sentence_id, document_id)` orchestrating full pipeline
-  - Call SRL parser to extract verb and roles
-  - Call Kāraka mapper to convert roles
-  - Call entity resolver for each entity mention
-  - Create action node in Neo4j with document_id
-  - Create entity nodes with document_id tracking
-  - Create Kāraka relationships with confidence and document_id
-  - Return status dict with extracted Kārakas
-  - Implement `process_document(sentences, document_id)` processing all sentences
+  - Implement `process_line(line_text, line_number, document_id)` orchestrating full pipeline
+  - Call SRL parser to extract ALL verbs and roles from line (handles multiple verbs)
+  - For each verb, call Kāraka mapper to convert roles
+  - Call entity resolver for each entity mention (ensures ONCE creation)
+  - Create action node in Neo4j with line_number, action_sequence, document_id (NO sentence text)
+  - Entity nodes already exist from resolver (reused across actions)
+  - Create Kāraka relationships FROM Action TO Entity with confidence, line_number, document_id
+  - Return status dict with extracted actions and Kārakas
+  - Implement `process_document(lines, document_id)` processing all lines
+  - Store document content in S3 for later retrieval
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 8.1, 8.2, 8.3, 8.4_
 
 ---
@@ -87,18 +90,20 @@
 - [ ] 10. Implement Cypher Generator
   - Create `src/query/cypher_generator.py`
   - Implement `generate(decomposition, min_confidence, document_filter)` returning Cypher query
-  - Build MATCH pattern for target Kāraka relationship
+  - Build MATCH pattern with CORRECT direction: (Action)-[KARAKA]->(Entity)
   - Add WHERE clauses for confidence threshold, verb matching, document filtering
   - Add constraint MATCH patterns for other Kārakas mentioned in query
-  - Return entity, sentence, confidence, document_id
+  - Return entity, line_number, confidence, document_id (NO sentence text from graph)
+  - Implement `retrieve_line_text(document_id, line_number)` to fetch text from S3
   - _Requirements: 6.3, 6.4, 6.8, 8.5, 8.6_
 
 - [ ] 11. Implement Answer Synthesizer
   - Create `src/query/answer_synthesizer.py`
   - Implement `synthesize(question, graph_results, decomposition)` using Nemotron NIM
-  - Build prompt template with question, graph results, and Kāraka roles
+  - Retrieve sentence text from S3 for each result using document_id + line_number
+  - Build prompt template with question, enriched results (with text), and Kāraka roles
   - Generate natural language answer with Kāraka role annotations
-  - Format sources with sentence text, confidence, document_id, document_name
+  - Format sources with line_text, line_number, confidence, document_id, document_name
   - Return answer dict with answer text, sources list, karakas, confidence
   - _Requirements: 6.6, 6.7, 8.5_
 
@@ -110,10 +115,11 @@
   - Create `lambda/ingestion_handler.py`
   - Parse API Gateway event for document_name and content (base64)
   - Generate unique job_id and document_id
-  - Split document into sentences
-  - Initialize job status in S3 with total_sentences
-  - Process sentences using graph_builder.process_document()
-  - Update S3 progress every 10 sentences
+  - Split document into lines (not sentences)
+  - Store document content in S3 for later line text retrieval
+  - Initialize job status in S3 with total_lines, document_content
+  - Process lines using graph_builder.process_document()
+  - Update S3 progress every 10 lines with line_text and actions array
   - Mark job as completed in S3 with statistics
   - Handle errors and update S3 status
   - Return job_id and status
@@ -123,21 +129,21 @@
   - Create `lambda/query_handler.py`
   - Parse API Gateway event for question, min_confidence, document_filter
   - Call query decomposer to analyze question
-  - Call Cypher generator to build query
+  - Call Cypher generator to build query (returns line_number, not sentence text)
   - Execute Cypher query against Neo4j
-  - Call answer synthesizer to generate response
-  - Return answer with sources and Kāraka annotations
+  - Call answer synthesizer to generate response (retrieves line text from S3)
+  - Return answer with sources (including line_text) and Kāraka annotations
   - Handle errors and return appropriate error responses
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.1, 9.3, 9.4, 9.5, 9.7_
 
 - [ ] 14. Implement Status and Graph Lambda Handlers
   - Create `lambda/status_handler.py` to retrieve job status from S3
   - Parse job_id from API Gateway path parameters
-  - Read job status JSON from S3
+  - Read job status JSON from S3 (includes line_text for each processed line)
   - Return progress percentage and statistics
   - Create `lambda/graph_handler.py` to retrieve visualization data
   - Call neo4j_client.get_graph_for_visualization()
-  - Return nodes and edges with document annotations
+  - Return nodes (Entity and Action) and edges (Kāraka relationships) with document annotations
   - _Requirements: 4.3, 7.1, 7.2, 7.3, 7.6, 8.7, 9.1, 9.5, 9.6, 9.7_
 
 ---
@@ -249,11 +255,15 @@
 
 - [ ] 26. End-to-End Testing
   - Upload ramayana_sample.txt and verify graph grows with entities and actions
+  - Verify Action nodes have line_number and action_sequence (NO sentence text)
+  - Verify Entity nodes are created ONCE and reused across multiple actions
+  - Verify Kāraka relationships point FROM Action TO Entity
   - Upload mahabharata_sample.txt and verify graph expands with new entities
   - Test entity resolution: verify same entities across documents are merged
-  - Test queries from test_queries.json and verify correct answers
+  - Test queries from test_queries.json and verify correct answers with line text retrieved from S3
   - Test document filtering: query with document_filter parameter
   - Verify Kāraka relationships are correctly labeled and color-coded
+  - Test multi-verb lines: verify multiple action nodes created with correct action_sequence
   - Check CloudWatch logs for errors
   - _Requirements: 11.5, 11.6_
 

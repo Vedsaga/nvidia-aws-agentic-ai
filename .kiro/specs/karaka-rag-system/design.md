@@ -119,55 +119,57 @@ The Kāraka Graph RAG System uses Pāṇinian semantic role theory to build a kn
 
 // Action Node (Kriya) - THE CENTER OF THE GRAPH
 (:Action {
-  id: String,                       // "action_42"
+  id: String,                       // "action_5_0" (line_number_action_sequence)
   verb: String,                     // "give"
-  sentence: String,                 // Full source sentence
-  sentence_id: Integer,             // Position in document
+  line_number: Integer,             // Position in document (line number)
+  action_sequence: Integer,         // Order within line if multiple verbs (0, 1, 2...)
   document_id: String,              // Source document
   created_at: Timestamp
 })
+// NOTE: Sentence text is NOT stored in graph
+// Retrieve from document storage using document_id + line_number when needed
 
 // Kāraka Relationships - ALL POINT FROM ACTION TO ENTITY
 // The Kriya (Action) is the binding force that connects entities through Kāraka roles
 
 (Action)-[:KARTA {                  // Agent - Who performs the action?
   confidence: Float,                // 0.0 - 1.0
-  source_sentence_id: Integer,
+  line_number: Integer,             // Source line number
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
 
 (Action)-[:KARMA {                  // Patient/Object - What is acted upon?
   confidence: Float,
-  source_sentence_id: Integer,
+  line_number: Integer,
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
 
 (Action)-[:KARANA {                 // Instrument - By what means?
   confidence: Float,
-  source_sentence_id: Integer,
+  line_number: Integer,
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
 
 (Action)-[:SAMPRADANA {             // Recipient - For whom? To whom?
   confidence: Float,
-  source_sentence_id: Integer,
+  line_number: Integer,
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
 
 (Action)-[:ADHIKARANA {             // Location - Where?
   confidence: Float,
-  source_sentence_id: Integer,
+  line_number: Integer,
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
 
 (Action)-[:APADANA {                // Source - From where? From whom?
   confidence: Float,
-  source_sentence_id: Integer,
+  line_number: Integer,
   document_id: String,
   created_at: Timestamp
 }]->(Entity)
@@ -184,8 +186,9 @@ The Kāraka Graph RAG System uses Pāṇinian semantic role theory to build a kn
   "job_id": "uuid-string",
   "document_id": "doc_123",
   "document_name": "ramayana.txt",
+  "document_content": "base64_encoded_or_text",
   "status": "processing|completed|failed",
-  "total_sentences": 500,
+  "total_lines": 500,
   "processed": 250,
   "percentage": 50.0,
   "started_at": "2025-10-28T10:00:00Z",
@@ -193,15 +196,21 @@ The Kāraka Graph RAG System uses Pāṇinian semantic role theory to build a kn
   "completed_at": null,
   "results": [
     {
-      "sentence_id": 0,
-      "sentence": "Rama gave bow to Lakshmana.",
+      "line_number": 1,
+      "line_text": "Rama gave bow to Lakshmana.",
       "status": "success|skipped|error",
-      "karakas": {
-        "KARTA": "Rama",
-        "KARMA": "bow",
-        "SAMPRADANA": "Lakshmana"
-      },
-      "action_id": "action_0",
+      "actions": [
+        {
+          "action_id": "action_1_0",
+          "verb": "gave",
+          "action_sequence": 0,
+          "karakas": {
+            "KARTA": "Rama",
+            "KARMA": "bow",
+            "SAMPRADANA": "Lakshmana"
+          }
+        }
+      ],
       "error": null
     }
   ],
@@ -267,7 +276,7 @@ The Kāraka Graph RAG System uses Pāṇinian semantic role theory to build a kn
   "answer": "Rama (KARTA) gave the bow (KARMA) to Lakshmana (SAMPRADANA).",
   "sources": [
     {
-      "sentence_id": 42,
+      "line_number": 42,
       "text": "Rama handed the mighty bow to his brother Lakshmana.",
       "confidence": 0.95,
       "document_id": "doc_123",
@@ -328,20 +337,24 @@ class SRLParser:
     def __init__(self):
         self.nlp = spacy.load("en_core_web_sm")
     
-    def parse_sentence(self, sentence: str) -> Tuple[str, Dict[str, str]]:
+    def parse_line(self, line: str) -> List[Tuple[str, Dict[str, str]]]:
         """
-        Returns: (verb, {role: entity})
-        Example: ("give", {"nsubj": "Rama", "obj": "bow", "iobj": "Lakshmana"})
+        Returns: List of (verb, {role: entity}) for each verb in the line
+        Example: [("called", {"nsubj": "she", "obj": "team"}), 
+                  ("scheduled", {"nsubj": "she", "obj": "meeting"})]
         """
-        doc = self.nlp(sentence)
-        verb = self._extract_main_verb(doc)
-        roles = self._extract_semantic_roles(doc)
-        return verb, roles
+        doc = self.nlp(line)
+        verbs = self._extract_all_verbs(doc)
+        results = []
+        for verb in verbs:
+            roles = self._extract_semantic_roles(doc, verb)
+            results.append((verb.text, roles))
+        return results
 ```
 
 **Key Methods**:
-- `_extract_main_verb()`: Finds ROOT verb in dependency tree
-- `_extract_semantic_roles()`: Maps dependency labels (nsubj, obj, iobj, obl) to entities
+- `_extract_all_verbs()`: Finds all verbs in dependency tree (handles multiple verbs per line)
+- `_extract_semantic_roles(doc, verb)`: Maps dependency labels (nsubj, obj, iobj, obl) to entities for specific verb
 - `_get_noun_phrase()`: Extracts full noun phrases including modifiers
 
 ### 2. Kāraka Mapper
@@ -376,11 +389,11 @@ class KarakaMapper:
 **Purpose**: Resolve entity mentions to canonical names using embedding similarity
 
 **Algorithm**:
-1. Check if entity exists in Neo4j
+1. Check if entity exists in Neo4j (by canonical_name or aliases)
 2. If not found, call SageMaker Embedding NIM to get vector
 3. Compare with existing entity embeddings using cosine similarity
-4. If similarity > 0.85, resolve to existing entity
-5. Otherwise, create new canonical entity
+4. If similarity > 0.85, resolve to existing entity and add document_id
+5. Otherwise, create new canonical entity with document_id
 
 **Implementation**:
 ```python
@@ -389,28 +402,42 @@ class EntityResolver:
         self.sagemaker = sagemaker_client
         self.neo4j = neo4j_client
         self.similarity_threshold = 0.85
+        self.entity_cache = {}  # In-memory cache for current document
     
     def resolve_entity(self, entity_mention: str, document_id: str) -> str:
         """
         Returns canonical entity name
+        Ensures each unique entity is created ONCE in Neo4j
         """
+        # Check cache first
+        if entity_mention in self.entity_cache:
+            return self.entity_cache[entity_mention]
+        
         # Check Neo4j for existing entities
         existing = self.neo4j.find_similar_entities(entity_mention)
         
         if not existing:
-            # New entity
+            # New entity - create it
             embedding = self._get_embedding(entity_mention)
-            return self._create_entity(entity_mention, embedding, document_id)
+            canonical_name = self._create_entity(entity_mention, embedding, document_id)
+            self.entity_cache[entity_mention] = canonical_name
+            return canonical_name
         
         # Compare embeddings
         mention_embedding = self._get_embedding(entity_mention)
         best_match = self._find_best_match(mention_embedding, existing)
         
         if best_match['similarity'] > self.similarity_threshold:
-            return best_match['canonical_name']
+            # Same entity - add alias and document_id
+            canonical_name = best_match['canonical_name']
+            self.neo4j.add_entity_alias(canonical_name, entity_mention, document_id)
+            self.entity_cache[entity_mention] = canonical_name
+            return canonical_name
         else:
             # Different entity with same name
-            return self._create_entity(entity_mention, mention_embedding, document_id)
+            canonical_name = self._create_entity(entity_mention, mention_embedding, document_id)
+            self.entity_cache[entity_mention] = canonical_name
+            return canonical_name
 ```
 
 ### 4. Query Decomposer
@@ -464,6 +491,9 @@ Respond with JSON:
 **Implementation**:
 ```python
 class CypherGenerator:
+    def __init__(self, s3_client):
+        self.s3 = s3_client
+    
     def generate(self, decomposition: Dict, min_confidence: float, document_filter: str = None) -> str:
         """
         Generates Cypher query with CORRECT direction: Action -> Entity
@@ -494,8 +524,7 @@ class CypherGenerator:
         
         query += """
         RETURN e.canonical_name AS answer,
-               a.sentence AS source_sentence,
-               a.sentence_id AS sentence_id,
+               a.line_number AS line_number,
                a.document_id AS document_id,
                r.confidence AS confidence
         ORDER BY r.confidence DESC
@@ -503,6 +532,23 @@ class CypherGenerator:
         """
         
         return query
+    
+    def retrieve_line_text(self, document_id: str, line_number: int) -> str:
+        """
+        Retrieves sentence text from S3 document storage
+        """
+        job_status = self.s3.get_object(
+            Bucket=os.environ['S3_BUCKET'],
+            Key=f"jobs/{document_id}.json"
+        )
+        job_data = json.loads(job_status['Body'].read())
+        
+        # Find the line in results
+        for result in job_data['results']:
+            if result['line_number'] == line_number:
+                return result['line_text']
+        
+        return None
 ```
 
 ### 6. Answer Synthesizer
@@ -512,12 +558,14 @@ class CypherGenerator:
 **Implementation**:
 ```python
 class AnswerSynthesizer:
-    def __init__(self, sagemaker_client):
+    def __init__(self, sagemaker_client, cypher_generator):
         self.sagemaker = sagemaker_client
+        self.cypher_gen = cypher_generator
     
     def synthesize(self, question: str, graph_results: List[Dict], decomposition: Dict) -> Dict:
         """
         Uses Nemotron NIM to create natural language answer
+        Retrieves sentence text from document storage
         """
         if not graph_results:
             return {
@@ -526,13 +574,25 @@ class AnswerSynthesizer:
                 "confidence": 0.0
             }
         
-        top_result = graph_results[0]
+        # Retrieve sentence text for each result
+        enriched_results = []
+        for result in graph_results:
+            line_text = self.cypher_gen.retrieve_line_text(
+                result['document_id'], 
+                result['line_number']
+            )
+            enriched_results.append({
+                **result,
+                'text': line_text
+            })
+        
+        top_result = enriched_results[0]
         prompt = self._build_synthesis_prompt(question, top_result, decomposition)
         answer_text = self._call_nemotron(prompt)
         
         return {
             "answer": answer_text,
-            "sources": self._format_sources(graph_results),
+            "sources": self._format_sources(enriched_results),
             "karakas": decomposition,
             "confidence": top_result['confidence']
         }
@@ -784,24 +844,27 @@ def call_sagemaker_with_retry(endpoint_name, payload, max_retries=3):
 
 ### Example: Tracing Object Movement
 
-**Sentences:**
+**Lines:**
 1. "Vishwamitra gave bow to Rama."
 2. "Rama gave bow to Lakshmana."
 3. "Rama killed Ravana using the bow."
 
 **Graph Structure:**
 ```
-(gave_1)-[KARTA]->(Vishwamitra)
-(gave_1)-[KARMA]->(bow)
-(gave_1)-[SAMPRADANA]->(Rama)
+(action_1_0:Action {verb: "gave", line_number: 1, action_sequence: 0})
+(action_1_0)-[KARTA]->(Vishwamitra)
+(action_1_0)-[KARMA]->(bow)
+(action_1_0)-[SAMPRADANA]->(Rama)
 
-(gave_2)-[KARTA]->(Rama)
-(gave_2)-[KARMA]->(bow)
-(gave_2)-[SAMPRADANA]->(Lakshmana)
+(action_2_0:Action {verb: "gave", line_number: 2, action_sequence: 0})
+(action_2_0)-[KARTA]->(Rama)
+(action_2_0)-[KARMA]->(bow)
+(action_2_0)-[SAMPRADANA]->(Lakshmana)
 
-(killed)-[KARTA]->(Rama)
-(killed)-[KARMA]->(Ravana)
-(killed)-[KARANA]->(bow)
+(action_3_0:Action {verb: "killed", line_number: 3, action_sequence: 0})
+(action_3_0)-[KARTA]->(Rama)
+(action_3_0)-[KARMA]->(Ravana)
+(action_3_0)-[KARANA]->(bow)
 ```
 
 **Query: "From where did Rama get the bow?"**
@@ -819,7 +882,8 @@ WHERE toLower(bow.canonical_name) = 'bow'
 MATCH (a1)-[:KARTA]->(giver:Entity)
 
 RETURN giver.canonical_name AS answer,
-       a1.sentence AS source_sentence
+       a1.line_number AS line_number,
+       a1.document_id AS document_id
 ```
 
 **Result:** "Vishwamitra" from sentence 1
@@ -840,8 +904,8 @@ OPTIONAL MATCH (a_use:Action)-[:KARANA]->(bow)
 MATCH (a_use)-[:KARTA]->(user:Entity)
 
 RETURN COALESCE(recipient.canonical_name, user.canonical_name) AS current_holder,
-       a.sentence_id AS last_action_id
-ORDER BY a.sentence_id DESC
+       a.line_number AS last_action_line
+ORDER BY a.line_number DESC
 LIMIT 1
 ```
 
@@ -860,8 +924,9 @@ WHERE toLower(bow.canonical_name) = 'bow'
 
 RETURN a.verb AS action,
        type(r) AS karaka_role,
-       a.sentence AS sentence
-ORDER BY a.sentence_id
+       a.line_number AS line_number,
+       a.document_id AS document_id
+ORDER BY a.line_number
 ```
 
 **Results:**
@@ -879,7 +944,8 @@ MATCH (a)-[:KARMA]->(object:Entity)
 
 RETURN recipient.canonical_name AS recipient,
        object.canonical_name AS object,
-       a.sentence AS sentence
+       a.line_number AS line_number,
+       a.document_id AS document_id
 ```
 
 **Result:** "Lakshmana" (received "bow")
@@ -895,20 +961,22 @@ WHERE toLower(bow.canonical_name) = 'bow'
 
 MATCH (a)-[:KARTA]->(agent:Entity)
 
-RETURN a.sentence_id AS order,
+RETURN a.line_number AS order,
        agent.canonical_name AS agent,
        a.verb AS action,
        type(r) AS role,
-       a.sentence AS sentence
-ORDER BY a.sentence_id
+       a.document_id AS document_id
+ORDER BY a.line_number
 ```
 
 **Results (chronological):**
-1. Vishwamitra gave (KARMA) → to Rama
-2. Rama gave (KARMA) → to Lakshmana  
-3. Rama used (KARANA) → to kill Ravana
+1. Line 1: Vishwamitra gave (KARMA) → to Rama
+2. Line 2: Rama gave (KARMA) → to Lakshmana  
+3. Line 3: Rama used (KARANA) → to kill Ravana
 
 This shows the bow's journey through different Kāraka roles across multiple actions.
+
+**Note:** Sentence text is retrieved separately from S3 document storage using document_id + line_number.
 
 ## Future Enhancements
 
@@ -945,8 +1013,8 @@ All code that creates relationships in Neo4j must follow this pattern:
 session.run("""
     MATCH (a:Action {id: $action_id})
     MATCH (e:Entity {canonical_name: $entity_name})
-    CREATE (a)-[:KARTA {confidence: $confidence, document_id: $doc_id}]->(e)
-""", action_id=action_id, entity_name=entity_name, confidence=0.95, doc_id=doc_id)
+    CREATE (a)-[:KARTA {confidence: $confidence, line_number: $line_num, document_id: $doc_id}]->(e)
+""", action_id=action_id, entity_name=entity_name, confidence=0.95, line_num=line_number, doc_id=doc_id)
 
 # WRONG - Do not do this!
 # CREATE (e)-[:KARTA]->(a)
