@@ -157,7 +157,7 @@
   - Create lambda.zip with all dependencies and handlers
   - _Requirements: 10.2_
 
-- [ ] 16. Create SageMaker Deployment Script
+- [x] 16. Create SageMaker Deployment Script
   - Create `infrastructure/deploy_sagemaker.py`
   - Use boto3 to create SageMaker model for Nemotron NIM (llama-3.1-nemotron-nano-8b-v1)
   - Use boto3 to create SageMaker model for Embedding NIM (nvidia-retrieval-embedding)
