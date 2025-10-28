@@ -97,7 +97,7 @@
   - Implement `retrieve_line_text(document_id, line_number)` to fetch text from S3
   - _Requirements: 6.3, 6.4, 6.8, 8.5, 8.6_
 
-- [ ] 11. Implement Answer Synthesizer
+- [x] 11. Implement Answer Synthesizer
   - Create `src/query/answer_synthesizer.py`
   - Implement `synthesize(question, graph_results, decomposition)` using Nemotron NIM
   - Retrieve sentence text from S3 for each result using document_id + line_number
@@ -111,7 +111,7 @@
 
 ## Phase 4: Lambda Functions and API
 
-- [x] 12. Implement Ingestion Lambda Handler
+- [ ] 12. Implement Ingestion Lambda Handler
   - Create `lambda/ingestion_handler.py`
   - Parse API Gateway event for document_name and content (base64)
   - Generate unique job_id and document_id
@@ -125,7 +125,7 @@
   - Return job_id and status
   - _Requirements: 3.1, 3.2, 4.1, 4.2, 4.3, 4.4, 4.5, 9.1, 9.2, 9.5, 9.6, 9.7, 10.2_
 
-- [x] 13. Implement Query Lambda Handler
+- [] 13. Implement Query Lambda Handler
   - Create `lambda/query_handler.py`
   - Parse API Gateway event for question, min_confidence, document_filter
   - Call query decomposer to analyze question
@@ -136,7 +136,7 @@
   - Handle errors and return appropriate error responses
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 9.1, 9.3, 9.4, 9.5, 9.7_
 
-- [x] 14. Implement Status and Graph Lambda Handlers
+- [ ] 14. Implement Status and Graph Lambda Handlers
   - Create `lambda/status_handler.py` to retrieve job status from S3
   - Parse job_id from API Gateway path parameters
   - Read job status JSON from S3 (includes line_text for each processed line)
@@ -150,14 +150,14 @@
 
 ## Phase 5: Infrastructure Deployment
 
-- [x] 15. Create Lambda Packaging Script
+- [ ] 15. Create Lambda Packaging Script
   - Create `infrastructure/package_lambda.sh`
   - Install requirements.txt to package/ directory
   - Copy src/ modules to package/
   - Create lambda.zip with all dependencies and handlers
   - _Requirements: 10.2_
 
-- [x] 16. Create SageMaker Deployment Script
+- [ ] 16. Create SageMaker Deployment Script
   - Create `infrastructure/deploy_sagemaker.py`
   - Use boto3 to create SageMaker model for Nemotron NIM (llama-3.1-nemotron-nano-8b-v1)
   - Use boto3 to create SageMaker model for Embedding NIM (nvidia-retrieval-embedding)
@@ -166,7 +166,7 @@
   - Output endpoint names for .env configuration
   - _Requirements: 1.2, 1.3, 1.4, 10.1_
 
-- [x] 17. Create API Gateway Deployment Script
+- [ ] 17. Create API Gateway Deployment Script
   - Create `infrastructure/deploy_api_gateway.py`
   - Use boto3 to create REST API named 'karaka-rag-api'
   - Create resources and methods: POST /ingest, GET /ingest/status/{job_id}, POST /query, GET /graph
@@ -176,7 +176,7 @@
   - Output API Gateway URL
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 10.3, 10.7_
 
-- [x] 18. Create Deployment Orchestration Script
+- [ ] 18. Create Deployment Orchestration Script
   - Create `infrastructure/deploy.sh` bash script
   - Check for .env file and load environment variables
   - Create S3 bucket for job tracking
