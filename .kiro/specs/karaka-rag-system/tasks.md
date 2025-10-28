@@ -9,7 +9,7 @@
   - Create `.gitignore` for Python and AWS artifacts
   - _Requirements: 11.1_
 
-- [ ] 2. Create Configuration Module
+- [x] 2. Create Configuration Module
   - Create `src/config.py` with Config class
   - Load environment variables for AWS region, S3 bucket, SageMaker endpoints, Neo4j credentials
   - Define Kāraka types list and confidence thresholds
