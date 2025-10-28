@@ -224,7 +224,7 @@
   - Show loading state during query processing
   - _Requirements: 6.1, 6.7_
 
-- [ ] 23. Build Graph Visualization Component
+- [x] 23. Build Graph Visualization Component
   - Create `frontend/src/components/GraphVisualization.jsx`
   - Use vis-network library to render graph
   - Fetch data from GET /graph API
