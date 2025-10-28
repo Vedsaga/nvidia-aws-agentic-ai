@@ -147,3 +147,163 @@ body {
   margin-top: 0.25rem;
   opacity: 0.8;
 }
+
+/* Progress Tracker Component */
+.progress-tracker {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.progress-tracker h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #333;
+}
+
+.progress-tracker.loading {
+  text-align: center;
+  color: #666;
+}
+
+.progress-tracker.error {
+  border: 1px solid #ef9a9a;
+  background: #ffebee;
+}
+
+.progress-tracker.error h3 {
+  color: #c62828;
+}
+
+.progress-tracker.error p {
+  color: #c62828;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.progress-info .job-id {
+  color: #666;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.progress-info .status {
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.progress-info .status.processing {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.progress-info .status.completed {
+  background: #d4edda;
+  color: #155724;
+}
+
+.progress-info .status.failed {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: 24px;
+  background: #f0f0f0;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50 0%, #45a049 100%);
+  transition: width 0.3s ease;
+  border-radius: 12px;
+}
+
+.progress-percentage {
+  text-align: center;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #333;
+  margin-bottom: 1rem;
+}
+
+.progress-details {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #666;
+  margin-bottom: 1rem;
+}
+
+.statistics {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.statistics .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.statistics .stat .label {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+}
+
+.statistics .stat .value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.statistics .stat.success .value {
+  color: #4CAF50;
+}
+
+.statistics .stat.skipped .value {
+  color: #FF9800;
+}
+
+.statistics .stat.errors .value {
+  color: #f44336;
+}
+
+.completion-message {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.completion-message.success {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #81c784;
+}
+
+.completion-message.failed {
+  background: #ffebee;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+}

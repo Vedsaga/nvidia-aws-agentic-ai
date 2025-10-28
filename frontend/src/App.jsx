@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import DocumentUpload from './components/DocumentUpload'
+import ProgressTracker from './components/ProgressTracker'
 
 function App() {
   const [currentJobId, setCurrentJobId] = useState(null);
@@ -21,10 +22,12 @@ function App() {
       <DocumentUpload onUploadComplete={handleUploadComplete} />
       
       {currentJobId && (
-        <div style={{ marginTop: '1rem', padding: '1rem', background: '#f5f5f5', borderRadius: '6px' }}>
-          <p><strong>Current Job:</strong> {currentJobId}</p>
-          <p><strong>Document ID:</strong> {currentDocumentId}</p>
-        </div>
+        <ProgressTracker 
+          jobId={currentJobId} 
+          onComplete={(status) => {
+            console.log('Processing complete:', status);
+          }}
+        />
       )}
     </div>
   )

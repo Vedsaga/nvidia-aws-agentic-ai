@@ -207,7 +207,7 @@
   - Show error messages if upload fails
   - _Requirements: 3.1, 4.2_
 
-- [ ] 21. Build Progress Tracker Component
+- [x] 21. Build Progress Tracker Component
   - Create `frontend/src/components/ProgressTracker.jsx`
   - Poll GET /ingest/status/{job_id} every 2 seconds
   - Display progress bar with percentage
