@@ -87,7 +87,7 @@
   - Parse LLM response to extract target_karaka, constraints dict, and verb
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 10. Implement Cypher Generator
+- [x] 10. Implement Cypher Generator
   - Create `src/query/cypher_generator.py`
   - Implement `generate(decomposition, min_confidence, document_filter)` returning Cypher query
   - Build MATCH pattern with CORRECT direction: (Action)-[KARAKA]->(Entity)
@@ -97,7 +97,7 @@
   - Implement `retrieve_line_text(document_id, line_number)` to fetch text from S3
   - _Requirements: 6.3, 6.4, 6.8, 8.5, 8.6_
 
-- [x] 11. Implement Answer Synthesizer
+- [ ] 11. Implement Answer Synthesizer
   - Create `src/query/answer_synthesizer.py`
   - Implement `synthesize(question, graph_results, decomposition)` using Nemotron NIM
   - Retrieve sentence text from S3 for each result using document_id + line_number
