@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 SageMaker Deployment Script for Karaka RAG System
-Deploys NVIDIA NIM models (Nemotron and Embedding) via SageMaker JumpStart
+Deploys open-source models via SageMaker JumpStart (no marketplace subscription needed)
 """
 
 import boto3
@@ -16,14 +16,13 @@ NEMOTRON_ENDPOINT_NAME = 'nemotron-karaka-endpoint'
 EMBEDDING_ENDPOINT_NAME = 'embedding-karaka-endpoint'
 INSTANCE_TYPE = 'ml.g5.xlarge'  # Per hackathon constraints
 
-# SageMaker JumpStart Model IDs for NVIDIA NIM
-# Based on: https://aws.amazon.com/blogs/machine-learning/nvidia-nemotron-super-49b-and-nano-8b-reasoning-models-now-available-in-amazon-bedrock-marketplace-and-amazon-sagemaker-jumpstart/
-# Model IDs verified from SageMaker JumpStart catalog
-NEMOTRON_MODEL_ID = 'nvidia-nemotron-nano-8b-nim'
-NEMOTRON_MODEL_VERSION = '*'  # Use latest version
+# Use open-source models that don't require marketplace subscription
+# Llama 3.1 8B for reasoning (similar capability to Nemotron Nano)
+REASONING_MODEL_ID = 'meta-textgeneration-llama-3-1-8b-instruct'
+REASONING_MODEL_VERSION = '*'
 
-# For embedding, we'll use NVIDIA NeMo Retriever (NV-EmbedQA)
-EMBEDDING_MODEL_ID = 'nvidia-llama3-2-nv-embedqa-1b-v2-nim'
+# BGE embeddings for semantic search (open-source, no subscription needed)
+EMBEDDING_MODEL_ID = 'huggingface-sentencesimilarity-bge-large-en-v1-5'
 EMBEDDING_MODEL_VERSION = '*'
 
 
@@ -210,22 +209,24 @@ def main():
     role_arn = get_execution_role()
     print()
     
-    # Deploy Nemotron NIM via JumpStart
-    print("Step 2: Deploy Nemotron Nano 8B via SageMaker JumpStart")
+    # Deploy Llama 3.1 8B for reasoning
+    print("Step 2: Deploy Llama 3.1 8B Instruct (Reasoning Model)")
     print("-" * 60)
+    print("⚠ Using Llama 3.1 8B instead of NVIDIA NIM (no marketplace subscription needed)")
     deploy_jumpstart_model(
         sagemaker, 
-        NEMOTRON_MODEL_ID, 
-        NEMOTRON_MODEL_VERSION,
+        REASONING_MODEL_ID, 
+        REASONING_MODEL_VERSION,
         NEMOTRON_ENDPOINT_NAME, 
         INSTANCE_TYPE, 
         role_arn
     )
     print()
     
-    # Deploy Embedding NIM via JumpStart
-    print("Step 3: Deploy NV-Embed-v2 via SageMaker JumpStart")
+    # Deploy BGE embeddings
+    print("Step 3: Deploy BGE-Large-EN-v1.5 (Embedding Model)")
     print("-" * 60)
+    print("⚠ Using BGE embeddings instead of NVIDIA NIM (no marketplace subscription needed)")
     deploy_jumpstart_model(
         sagemaker,
         EMBEDDING_MODEL_ID,
