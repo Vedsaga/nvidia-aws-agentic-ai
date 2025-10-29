@@ -28,6 +28,7 @@ env/
 .venv
 
 # Environment variables
+.env*
 .env
 
 # IDE

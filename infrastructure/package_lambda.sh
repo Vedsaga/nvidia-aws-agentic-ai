@@ -18,12 +18,12 @@ mkdir -p package
 
 # Install Python dependencies to package directory
 echo "Installing Python dependencies..."
-pip install -r requirements.txt -t package/ --upgrade
+# Install all dependencies including spaCy
+pip install -r requirements.txt -t package/ --upgrade --only-binary=:all:
 
-# Download spaCy language model
-echo "Downloading spaCy language model..."
-python -m spacy download en_core_web_sm
-pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl -t package/
+# Download spaCy model directly
+echo "Downloading spaCy model..."
+pip install https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl -t package/
 
 # Copy source modules to package
 echo "Copying source modules..."

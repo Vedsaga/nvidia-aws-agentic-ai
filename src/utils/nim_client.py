@@ -1,52 +1,78 @@
 """
-NIM Client for interacting with NVIDIA Inference Microservices on AWS SageMaker.
-Provides methods for text generation (Nemotron) and embeddings.
+NIM Client for interacting with NVIDIA Inference Microservices.
+Supports both AWS SageMaker and NVIDIA API (build.nvidia.com).
 """
 import json
 import time
 import random
+import os
 from typing import List, Dict, Any, Optional
-import boto3
-from botocore.exceptions import ClientError
 import logging
-
-from src.config import Config
 
 logger = logging.getLogger(__name__)
 
+# Try to import boto3, but don't fail if not available
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
+    logger.warning("boto3 not available, will use NVIDIA API only")
+
+try:
+    from src.config import Config
+except ImportError:
+    Config = None
+
 
 class NIMClient:
-    """Client for calling NVIDIA NIMs deployed on AWS SageMaker."""
+    """Client for calling NVIDIA NIMs via SageMaker or NVIDIA API."""
     
     def __init__(
         self,
         nemotron_endpoint: Optional[str] = None,
         embedding_endpoint: Optional[str] = None,
         region_name: Optional[str] = None,
-        max_retries: int = 3
+        max_retries: int = 3,
+        use_nvidia_api: bool = None
     ):
         """
-        Initialize NIM client with SageMaker runtime.
+        Initialize NIM client.
         
         Args:
-            nemotron_endpoint: SageMaker endpoint name for Nemotron NIM
-            embedding_endpoint: SageMaker endpoint name for Embedding NIM
+            nemotron_endpoint: SageMaker endpoint or model name
+            embedding_endpoint: SageMaker endpoint or model name
             region_name: AWS region name
-            max_retries: Maximum number of retry attempts for throttling
+            max_retries: Maximum retry attempts
+            use_nvidia_api: Force use of NVIDIA API instead of SageMaker
         """
-        self.nemotron_endpoint = nemotron_endpoint or Config.SAGEMAKER_NEMOTRON_ENDPOINT
-        self.embedding_endpoint = embedding_endpoint or Config.SAGEMAKER_EMBEDDING_ENDPOINT
         self.max_retries = max_retries
         
-        # Initialize SageMaker runtime client
-        self.sagemaker_runtime = boto3.client(
-            'sagemaker-runtime',
-            region_name=region_name or Config.AWS_REGION,
-            aws_access_key_id=Config.AWS_ACCESS_KEY_ID or None,
-            aws_secret_access_key=Config.AWS_SECRET_ACCESS_KEY or None
-        )
+        # Determine if we should use NVIDIA API
+        self.use_nvidia_api = use_nvidia_api
+        if self.use_nvidia_api is None:
+            self.use_nvidia_api = os.environ.get('USE_NVIDIA_API', 'false').lower() == 'true'
         
-        logger.info(f"Initialized NIM client with endpoints: {self.nemotron_endpoint}, {self.embedding_endpoint}")
+        if self.use_nvidia_api:
+            # Use NVIDIA API
+            self.nvidia_api_key = os.environ.get('NVIDIA_API_KEY', '')
+            self.nvidia_api_base = "https://integrate.api.nvidia.com/v1"
+            logger.info("Initialized NIM client with NVIDIA API")
+        else:
+            # Use SageMaker
+            if not BOTO3_AVAILABLE:
+                raise ImportError("boto3 required for SageMaker mode")
+            
+            self.nemotron_endpoint = nemotron_endpoint or (Config.SAGEMAKER_NEMOTRON_ENDPOINT if Config else None)
+            self.embedding_endpoint = embedding_endpoint or (Config.SAGEMAKER_EMBEDDING_ENDPOINT if Config else None)
+            
+            self.sagemaker_runtime = boto3.client(
+                'sagemaker-runtime',
+                region_name=region_name or (Config.AWS_REGION if Config else 'us-east-1')
+            )
+            
+            logger.info(f"Initialized NIM client with SageMaker endpoints: {self.nemotron_endpoint}, {self.embedding_endpoint}")
     
     def call_nemotron(
         self,
@@ -56,65 +82,115 @@ class NIMClient:
         top_p: float = 0.9
     ) -> str:
         """
-        Call Nemotron NIM for text generation with retry logic.
+        Call Nemotron NIM for text generation.
         
         Args:
             prompt: Input text prompt
             max_tokens: Maximum tokens to generate
-            temperature: Sampling temperature (0.0 to 1.0)
+            temperature: Sampling temperature
             top_p: Nucleus sampling parameter
             
         Returns:
             str: Generated text response
-            
-        Raises:
-            Exception: If all retry attempts fail
         """
-        payload = {
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p
-        }
-        
-        return self._invoke_with_retry(
-            endpoint_name=self.nemotron_endpoint,
-            payload=payload,
-            operation="text_generation"
-        )
+        if self.use_nvidia_api:
+            return self._call_nvidia_api_text(prompt, max_tokens, temperature, top_p)
+        else:
+            payload = {
+                "prompt": prompt,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "top_p": top_p
+            }
+            return self._invoke_with_retry(
+                endpoint_name=self.nemotron_endpoint,
+                payload=payload,
+                operation="text_generation"
+            )
     
     def get_embedding(self, text: str) -> List[float]:
         """
-        Get embedding vector for text using Embedding NIM with retry logic.
+        Get embedding vector for text.
         
         Args:
             text: Input text to embed
             
         Returns:
-            List[float]: Embedding vector (typically 768 dimensions)
-            
-        Raises:
-            Exception: If all retry attempts fail
+            List[float]: Embedding vector
         """
+        if self.use_nvidia_api:
+            return self._call_nvidia_api_embedding(text)
+        else:
+            payload = {"input": text}
+            response = self._invoke_with_retry(
+                endpoint_name=self.embedding_endpoint,
+                payload=payload,
+                operation="embedding"
+            )
+            
+            if isinstance(response, dict):
+                if "embedding" in response:
+                    return response["embedding"]
+                elif "data" in response and len(response["data"]) > 0:
+                    return response["data"][0].get("embedding", [])
+            
+            raise ValueError(f"Unexpected embedding response format: {response}")
+    
+    def _call_nvidia_api_text(
+        self,
+        prompt: str,
+        max_tokens: int,
+        temperature: float,
+        top_p: float
+    ) -> str:
+        """Call NVIDIA API for text generation."""
+        import requests
+        
+        url = f"{self.nvidia_api_base}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.nvidia_api_key}",
+            "Content-Type": "application/json"
+        }
         payload = {
-            "input": text
+            "model": "meta/llama-3.1-8b-instruct",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "top_p": top_p
         }
         
-        response = self._invoke_with_retry(
-            endpoint_name=self.embedding_endpoint,
-            payload=payload,
-            operation="embedding"
-        )
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
         
-        # Parse embedding response
-        # Expected format: {"embedding": [0.1, 0.2, ...]} or {"data": [{"embedding": [...]}]}
-        if isinstance(response, dict):
-            if "embedding" in response:
-                return response["embedding"]
-            elif "data" in response and len(response["data"]) > 0:
-                return response["data"][0].get("embedding", [])
+        result = response.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            return result["choices"][0]["message"]["content"]
         
-        raise ValueError(f"Unexpected embedding response format: {response}")
+        raise ValueError(f"Unexpected API response: {result}")
+    
+    def _call_nvidia_api_embedding(self, text: str) -> List[float]:
+        """Call NVIDIA API for embeddings."""
+        import requests
+        
+        url = f"{self.nvidia_api_base}/embeddings"
+        headers = {
+            "Authorization": f"Bearer {self.nvidia_api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": "nvidia/nv-embedqa-e5-v5",
+            "input": text,
+            "input_type": "query"
+        }
+        
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        if "data" in result and len(result["data"]) > 0:
+            return result["data"][0]["embedding"]
+        
+        raise ValueError(f"Unexpected API response: {result}")
     
     def _invoke_with_retry(
         self,

@@ -234,7 +234,7 @@
   - Add Kāraka legend explaining colors
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 8.7_
 
-- [ ] 24. Build Main App Component
+- [x] 24. Build Main App Component
   - Create `frontend/src/App.jsx`
   - Layout: left panel with upload, progress, query; right panel with graph
   - Integrate DocumentUpload, ProgressTracker, QueryInterface, GraphVisualization
@@ -244,16 +244,29 @@
   - _Requirements: 11.1_
 
 ---
+## Phase 7: Deploy infrastructure
+- [x] 25. Deploy AWS Infrastructure
+  - Run `infrastructure/deploy.sh` to orchestrate full deployment
+  - Verify SageMaker endpoints are InService
+  - Verify Lambda functions are deployed with correct environment variables
+  - Verify API Gateway is created with all endpoints
+  - Test POST /ingest endpoint with sample document
+  - Test GET /ingest/status/{job_id} endpoint
+  - Test POST /query endpoint with sample question
+  - Test GET /graph endpoint
+  - Document API Gateway URL and endpoint names in .env
+  - _Requirements: 10.1, 10.2, 10.3, 10.7, 10.8_
 
-## Phase 7: Testing and Data
 
-- [ ] 25. Create Test Data Files
+## Phase 8: Testing and Data
+
+- [x] 26. Create Test Data Files
   - Create `data/ramayana_sample.txt` with 20-30 sentences from Ramayana
   - Create `data/mahabharata_sample.txt` with 20-30 sentences from Mahabharata
   - Create `data/test_queries.json` with sample queries for each Kāraka type
   - _Requirements: 11.3_
 
-- [ ] 26. End-to-End Testing
+- [x] 27. End-to-End Testing
   - Upload ramayana_sample.txt and verify graph grows with entities and actions
   - Verify Action nodes have line_number and action_sequence (NO sentence text)
   - Verify Entity nodes are created ONCE and reused across multiple actions

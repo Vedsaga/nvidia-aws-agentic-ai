@@ -171,7 +171,7 @@ def add_cors_options(apigw, api_id, resource_id):
         raise
 
 
-def create_lambda_integration(apigw, lambda_client, api_id, resource_id, http_method, lambda_arn, region):
+def create_lambda_integration(apigw, lambda_client, api_id, resource_id, http_method, lambda_arn, region, account_id):
     """Create Lambda integration for a method"""
     try:
         # Check if method exists
@@ -216,7 +216,7 @@ def create_lambda_integration(apigw, lambda_client, api_id, resource_id, http_me
                 StatementId=statement_id,
                 Action='lambda:InvokeFunction',
                 Principal='apigateway.amazonaws.com',
-                SourceArn=f'arn:aws:execute-api:{region}:*:{api_id}/*/{http_method}/*'
+                SourceArn=f'arn:aws:execute-api:{region}:{account_id}:{api_id}/*/{http_method}/*'
             )
         except ClientError as e:
             if e.response['Error']['Code'] != 'ResourceConflictException':
@@ -283,7 +283,7 @@ def main():
     print("Step 3: Create /ingest Endpoint")
     print("-" * 60)
     ingest_id = create_resource(apigw, api_id, root_id, 'ingest')
-    create_lambda_integration(apigw, lambda_client, api_id, ingest_id, 'POST', lambda_arns['ingestion'], region)
+    create_lambda_integration(apigw, lambda_client, api_id, ingest_id, 'POST', lambda_arns['ingestion'], region, account_id)
     add_cors_options(apigw, api_id, ingest_id)
     print()
     
@@ -292,7 +292,7 @@ def main():
     print("-" * 60)
     status_parent_id = create_resource(apigw, api_id, ingest_id, 'status')
     status_id = create_resource(apigw, api_id, status_parent_id, '{job_id}')
-    create_lambda_integration(apigw, lambda_client, api_id, status_id, 'GET', lambda_arns['status'], region)
+    create_lambda_integration(apigw, lambda_client, api_id, status_id, 'GET', lambda_arns['status'], region, account_id)
     add_cors_options(apigw, api_id, status_id)
     print()
     
@@ -300,7 +300,7 @@ def main():
     print("Step 5: Create /query Endpoint")
     print("-" * 60)
     query_id = create_resource(apigw, api_id, root_id, 'query')
-    create_lambda_integration(apigw, lambda_client, api_id, query_id, 'POST', lambda_arns['query'], region)
+    create_lambda_integration(apigw, lambda_client, api_id, query_id, 'POST', lambda_arns['query'], region, account_id)
     add_cors_options(apigw, api_id, query_id)
     print()
     
@@ -308,7 +308,7 @@ def main():
     print("Step 6: Create /graph Endpoint")
     print("-" * 60)
     graph_id = create_resource(apigw, api_id, root_id, 'graph')
-    create_lambda_integration(apigw, lambda_client, api_id, graph_id, 'GET', lambda_arns['graph'], region)
+    create_lambda_integration(apigw, lambda_client, api_id, graph_id, 'GET', lambda_arns['graph'], region, account_id)
     add_cors_options(apigw, api_id, graph_id)
     print()
     

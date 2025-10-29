@@ -17,9 +17,9 @@ def get_neo4j_client():
     global neo4j_client
     if neo4j_client is None:
         neo4j_client = Neo4jClient(
-            uri=config.neo4j_uri,
-            username=config.neo4j_username,
-            password=config.neo4j_password
+            uri=Config.NEO4J_URI,
+            username=Config.NEO4J_USERNAME,
+            password=Config.NEO4J_PASSWORD
         )
     return neo4j_client
 
