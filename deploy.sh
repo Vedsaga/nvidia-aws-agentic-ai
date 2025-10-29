@@ -3,10 +3,11 @@
 ################################################################################
 # Kāraka RAG System - Unified Deployment Script
 # Usage:
-#   ./deploy_karaka.sh --env personal          # Deploy with personal AWS account
-#   ./deploy_karaka.sh --env vocareum          # Deploy with Vocareum AWS account
-#   ./deploy_karaka.sh --env personal --test   # Deploy and test
-#   ./deploy_karaka.sh --cleanup               # Remove all resources
+#   ./deploy.sh --env personal                    # Deploy full system
+#   ./deploy.sh --env personal --sagemaker-only   # Deploy only SageMaker endpoints
+#   ./deploy.sh --env personal --skip-sagemaker   # Skip SageMaker deployment
+#   ./deploy.sh --env personal --test             # Deploy and test
+#   ./deploy.sh --cleanup                         # Remove all resources
 ################################################################################
 
 set -e
@@ -39,6 +40,8 @@ error_exit() {
 ENV_TYPE=""
 RUN_TEST=false
 CLEANUP=false
+SAGEMAKER_ONLY=false
+SKIP_SAGEMAKER=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -54,12 +57,145 @@ while [[ $# -gt 0 ]]; do
             CLEANUP=true
             shift
             ;;
+        --sagemaker-only)
+            SAGEMAKER_ONLY=true
+            shift
+            ;;
+        --skip-sagemaker)
+            SKIP_SAGEMAKER=true
+            shift
+            ;;
         *)
-            echo "Usage: $0 --env [personal|vocareum] [--test] [--cleanup]"
+            echo "Usage: $0 --env [personal|vocareum] [--sagemaker-only] [--skip-sagemaker] [--test] [--cleanup]"
             exit 1
             ;;
     esac
 done
+
+################################################################################
+# SageMaker NIM Deployment Function
+################################################################################
+deploy_sagemaker_nim() {
+    print_header "SageMaker NVIDIA NIM Deployment"
+    
+    REGION="us-east-1"
+    HACKATHON_INSTANCE_TYPE="ml.g6e.2xlarge"
+    
+    # Model Package ARNs
+    NEMOTRON_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:865070037744:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"
+    EMBED_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:865070037744:model-package/llama-3-2-nv-embedqa-1b-v2-nim-790d4634e92a3e39a57f47cf420fb687"
+    
+    # Resource names
+    NEMOTRON_MODEL_NAME="nemotron-karaka-model"
+    NEMOTRON_ENDPOINT_CONFIG_NAME="nemotron-karaka-config"
+    NEMOTRON_ENDPOINT_NAME="nemotron-karaka-endpoint"
+    
+    EMBED_MODEL_NAME="embedding-karaka-model"
+    EMBED_ENDPOINT_CONFIG_NAME="embedding-karaka-config"
+    EMBED_ENDPOINT_NAME="embedding-karaka-endpoint"
+    
+    print_warning "Instance type: ${HACKATHON_INSTANCE_TYPE}"
+    print_warning "Note: NVIDIA NIM requires ml.g6e.2xlarge minimum (exceeds hackathon ml.g5.xlarge constraint)"
+    echo ""
+    
+    # Deploy Nemotron Nano 8B
+    print_step "Deploying Nemotron Nano 8B (Reasoning Model)..."
+    
+    if aws sagemaker describe-model --model-name ${NEMOTRON_MODEL_NAME} --region ${REGION} 2>/dev/null; then
+        print_warning "Model exists, deleting..."
+        aws sagemaker delete-model --model-name ${NEMOTRON_MODEL_NAME} --region ${REGION}
+        sleep 2
+    fi
+    
+    aws sagemaker create-model \
+        --model-name ${NEMOTRON_MODEL_NAME} \
+        --execution-role-arn ${EXECUTION_ROLE_ARN} \
+        --primary-container ModelPackageName=${NEMOTRON_MODEL_PACKAGE_ARN} \
+        --enable-network-isolation \
+        --region ${REGION} > /dev/null
+    
+    if aws sagemaker describe-endpoint-config --endpoint-config-name ${NEMOTRON_ENDPOINT_CONFIG_NAME} --region ${REGION} 2>/dev/null; then
+        aws sagemaker delete-endpoint-config --endpoint-config-name ${NEMOTRON_ENDPOINT_CONFIG_NAME} --region ${REGION}
+        sleep 2
+    fi
+    
+    aws sagemaker create-endpoint-config \
+        --endpoint-config-name ${NEMOTRON_ENDPOINT_CONFIG_NAME} \
+        --production-variants VariantName=variant-1,ModelName=${NEMOTRON_MODEL_NAME},InstanceType=${HACKATHON_INSTANCE_TYPE},InitialInstanceCount=1,ModelDataDownloadTimeoutInSeconds=3600 \
+        --region ${REGION} > /dev/null
+    
+    if aws sagemaker describe-endpoint --endpoint-name ${NEMOTRON_ENDPOINT_NAME} --region ${REGION} 2>/dev/null; then
+        ENDPOINT_STATUS=$(aws sagemaker describe-endpoint --endpoint-name ${NEMOTRON_ENDPOINT_NAME} --region ${REGION} --query 'EndpointStatus' --output text)
+        if [ "$ENDPOINT_STATUS" == "InService" ]; then
+            print_success "Nemotron endpoint already InService"
+        else
+            print_warning "Endpoint status: ${ENDPOINT_STATUS}, recreating..."
+            aws sagemaker delete-endpoint --endpoint-name ${NEMOTRON_ENDPOINT_NAME} --region ${REGION}
+            sleep 5
+            aws sagemaker create-endpoint \
+                --endpoint-name ${NEMOTRON_ENDPOINT_NAME} \
+                --endpoint-config-name ${NEMOTRON_ENDPOINT_CONFIG_NAME} \
+                --region ${REGION} > /dev/null
+        fi
+    else
+        aws sagemaker create-endpoint \
+            --endpoint-name ${NEMOTRON_ENDPOINT_NAME} \
+            --endpoint-config-name ${NEMOTRON_ENDPOINT_CONFIG_NAME} \
+            --region ${REGION} > /dev/null
+    fi
+    
+    print_step "Waiting for Nemotron endpoint (10-20 min)..."
+    aws sagemaker wait endpoint-in-service --endpoint-name ${NEMOTRON_ENDPOINT_NAME} --region ${REGION}
+    print_success "Nemotron endpoint InService"
+    
+    # Deploy EmbedQA
+    print_step "Deploying EmbedQA (Embedding Model)..."
+    
+    if aws sagemaker describe-model --model-name ${EMBED_MODEL_NAME} --region ${REGION} 2>/dev/null; then
+        aws sagemaker delete-model --model-name ${EMBED_MODEL_NAME} --region ${REGION}
+        sleep 2
+    fi
+    
+    aws sagemaker create-model \
+        --model-name ${EMBED_MODEL_NAME} \
+        --execution-role-arn ${EXECUTION_ROLE_ARN} \
+        --primary-container ModelPackageName=${EMBED_MODEL_PACKAGE_ARN} \
+        --enable-network-isolation \
+        --region ${REGION} > /dev/null
+    
+    if aws sagemaker describe-endpoint-config --endpoint-config-name ${EMBED_ENDPOINT_CONFIG_NAME} --region ${REGION} 2>/dev/null; then
+        aws sagemaker delete-endpoint-config --endpoint-config-name ${EMBED_ENDPOINT_CONFIG_NAME} --region ${REGION}
+        sleep 2
+    fi
+    
+    aws sagemaker create-endpoint-config \
+        --endpoint-config-name ${EMBED_ENDPOINT_CONFIG_NAME} \
+        --production-variants VariantName=variant-1,ModelName=${EMBED_MODEL_NAME},InstanceType=${HACKATHON_INSTANCE_TYPE},InitialInstanceCount=1,ModelDataDownloadTimeoutInSeconds=3600 \
+        --region ${REGION} > /dev/null
+    
+    if aws sagemaker describe-endpoint --endpoint-name ${EMBED_ENDPOINT_NAME} --region ${REGION} 2>/dev/null; then
+        ENDPOINT_STATUS=$(aws sagemaker describe-endpoint --endpoint-name ${EMBED_ENDPOINT_NAME} --region ${REGION} --query 'EndpointStatus' --output text)
+        if [ "$ENDPOINT_STATUS" == "InService" ]; then
+            print_success "Embedding endpoint already InService"
+        else
+            aws sagemaker delete-endpoint --endpoint-name ${EMBED_ENDPOINT_NAME} --region ${REGION}
+            sleep 5
+            aws sagemaker create-endpoint \
+                --endpoint-name ${EMBED_ENDPOINT_NAME} \
+                --endpoint-config-name ${EMBED_ENDPOINT_CONFIG_NAME} \
+                --region ${REGION} > /dev/null
+        fi
+    else
+        aws sagemaker create-endpoint \
+            --endpoint-name ${EMBED_ENDPOINT_NAME} \
+            --endpoint-config-name ${EMBED_ENDPOINT_CONFIG_NAME} \
+            --region ${REGION} > /dev/null
+    fi
+    
+    print_step "Waiting for Embedding endpoint (10-20 min)..."
+    aws sagemaker wait endpoint-in-service --endpoint-name ${EMBED_ENDPOINT_NAME} --region ${REGION}
+    print_success "Embedding endpoint InService"
+}
 
 ################################################################################
 # Cleanup Function
@@ -68,12 +204,13 @@ cleanup_all() {
     print_header "Cleanup - Remove All Resources"
     
     echo "This will DELETE all deployed resources:"
+    echo "  - SageMaker Endpoints (2)"
     echo "  - Lambda Functions (4)"
     echo "  - API Gateway"
     echo "  - Neo4j EC2 Instance"
     echo "  - Security Groups"
     echo "  - S3 Bucket (and all data)"
-    echo "  - IAM Role"
+    echo "  - IAM Roles"
     echo ""
     read -p "Are you sure? Type 'DELETE' to confirm: " confirm
     
@@ -82,7 +219,6 @@ cleanup_all() {
         exit 0
     fi
     
-    # Load environment
     if [ -f .env ]; then
         set -a
         source .env
@@ -91,13 +227,29 @@ cleanup_all() {
     
     print_step "Starting cleanup..."
     
+    # Delete SageMaker endpoints
+    print_step "Deleting SageMaker endpoints..."
+    for endpoint in nemotron-karaka-endpoint embedding-karaka-endpoint; do
+        if aws sagemaker delete-endpoint --endpoint-name "$endpoint" 2>/dev/null; then
+            print_success "Deleted endpoint $endpoint"
+        fi
+    done
+    
+    # Delete endpoint configs
+    for config in nemotron-karaka-config embedding-karaka-config; do
+        aws sagemaker delete-endpoint-config --endpoint-config-name "$config" 2>/dev/null || true
+    done
+    
+    # Delete models
+    for model in nemotron-karaka-model embedding-karaka-model; do
+        aws sagemaker delete-model --model-name "$model" 2>/dev/null || true
+    done
+    
     # Delete Lambda functions
     print_step "Deleting Lambda functions..."
     for func in karaka-ingestion-handler karaka-status-handler karaka-query-handler karaka-graph-handler; do
         if aws lambda delete-function --function-name "$func" 2>/dev/null; then
             print_success "Deleted $func"
-        else
-            print_warning "$func not found"
         fi
     done
     
@@ -107,8 +259,6 @@ cleanup_all() {
     if [ -n "$API_ID" ] && [ "$API_ID" != "None" ]; then
         aws apigateway delete-rest-api --rest-api-id "$API_ID"
         print_success "Deleted API Gateway"
-    else
-        print_warning "API Gateway not found"
     fi
     
     # Terminate Neo4j instance
@@ -120,56 +270,22 @@ cleanup_all() {
     if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
         aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" > /dev/null
         print_success "Terminating $INSTANCE_ID"
-        aws ec2 wait instance-terminated --instance-ids "$INSTANCE_ID" 2>/dev/null || true
-    else
-        print_warning "Neo4j instance not found"
     fi
     
     # Delete security group
-    print_step "Deleting security group..."
+    sleep 30
     SG_ID=$(aws ec2 describe-security-groups \
         --filters "Name=group-name,Values=karaka-neo4j-sg" \
         --query "SecurityGroups[0].GroupId" \
         --output text 2>/dev/null)
     if [ -n "$SG_ID" ] && [ "$SG_ID" != "None" ]; then
-        sleep 30  # Wait for instance termination
-        if aws ec2 delete-security-group --group-id "$SG_ID" 2>/dev/null; then
-            print_success "Deleted security group"
-        else
-            print_warning "Security group in use or already deleted"
-        fi
+        aws ec2 delete-security-group --group-id "$SG_ID" 2>/dev/null || true
     fi
     
-    # Empty and delete S3 bucket
-    print_step "Deleting S3 bucket..."
-    if [ -n "$S3_BUCKET" ] && aws s3 ls "s3://$S3_BUCKET" > /dev/null 2>&1; then
+    # Delete S3 bucket
+    if [ -n "$S3_BUCKET" ]; then
         aws s3 rm "s3://$S3_BUCKET" --recursive 2>/dev/null || true
-        if aws s3 rb "s3://$S3_BUCKET" 2>/dev/null; then
-            print_success "Deleted S3 bucket"
-        else
-            print_warning "Could not delete bucket"
-        fi
-    else
-        print_warning "S3 bucket not found"
-    fi
-    
-    # Delete IAM role
-    print_step "Deleting IAM role..."
-    ROLE_NAME="KarakaRAGLambdaRole"
-    if aws iam get-role --role-name "$ROLE_NAME" > /dev/null 2>&1; then
-        aws iam detach-role-policy --role-name "$ROLE_NAME" \
-            --policy-arn "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole" 2>/dev/null || true
-        aws iam detach-role-policy --role-name "$ROLE_NAME" \
-            --policy-arn "arn:aws:iam::aws:policy/AmazonS3FullAccess" 2>/dev/null || true
-        aws iam detach-role-policy --role-name "$ROLE_NAME" \
-            --policy-arn "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess" 2>/dev/null || true
-        if aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null; then
-            print_success "Deleted IAM role"
-        else
-            print_warning "Could not delete role"
-        fi
-    else
-        print_warning "IAM role not found"
+        aws s3 rb "s3://$S3_BUCKET" 2>/dev/null || true
     fi
     
     print_success "Cleanup complete!"
@@ -224,6 +340,37 @@ fi
 
 export AWS_REGION=${AWS_REGION:-us-east-1}
 export S3_BUCKET=${S3_BUCKET:-karaka-rag-${ENV_TYPE}-$(date +%s)}
+
+################################################################################
+# Deploy SageMaker NIM Endpoints
+################################################################################
+if [ "$SKIP_SAGEMAKER" != true ]; then
+    if [ -z "${EXECUTION_ROLE_ARN}" ]; then
+        print_warning "EXECUTION_ROLE_ARN not set, skipping SageMaker deployment"
+        print_warning "Add EXECUTION_ROLE_ARN to $ENV_FILE to deploy SageMaker endpoints"
+    else
+        deploy_sagemaker_nim
+        
+        # Update env file with endpoint names
+        if ! grep -q "SAGEMAKER_NEMOTRON_ENDPOINT=nemotron-karaka-endpoint" "$ENV_FILE"; then
+            echo "" >> "$ENV_FILE"
+            echo "# SageMaker Endpoints (deployed)" >> "$ENV_FILE"
+            echo "SAGEMAKER_NEMOTRON_ENDPOINT=nemotron-karaka-endpoint" >> "$ENV_FILE"
+            echo "SAGEMAKER_EMBEDDING_ENDPOINT=embedding-karaka-endpoint" >> "$ENV_FILE"
+        fi
+        
+        # Reload environment
+        set -a
+        source .env
+        set +a
+    fi
+fi
+
+# Exit if SageMaker-only deployment
+if [ "$SAGEMAKER_ONLY" = true ]; then
+    print_success "SageMaker deployment complete!"
+    exit 0
+fi
 
 ################################################################################
 # S3 Bucket Setup
@@ -333,7 +480,6 @@ for FUNC_NAME in "${!FUNCTIONS[@]}"; do
     print_step "Deploying $FUNC_NAME..."
     
     if aws lambda get-function --function-name "$FUNC_NAME" > /dev/null 2>&1; then
-        # Wait for function to be ready
         for i in {1..30}; do
             STATE=$(aws lambda get-function --function-name "$FUNC_NAME" --query 'Configuration.State' --output text 2>/dev/null || echo "Pending")
             if [ "$STATE" = "Active" ]; then
@@ -413,7 +559,6 @@ print_header "Step 6: Deploy Neo4j Community Edition"
 
 bash infrastructure/deploy_neo4j.sh
 
-# Get Neo4j details
 NEO4J_INSTANCE_ID=$(aws ec2 describe-instances \
     --filters "Name=tag:Name,Values=karaka-neo4j" "Name=instance-state-name,Values=running" \
     --query 'Reservations[0].Instances[0].InstanceId' \
@@ -427,14 +572,12 @@ if [ -n "$NEO4J_INSTANCE_ID" ] && [ "$NEO4J_INSTANCE_ID" != "None" ]; then
     
     NEO4J_URI="bolt://$NEO4J_PUBLIC_IP:7687"
     
-    # Update .env with Neo4j URI
     if grep -q "^NEO4J_URI=" .env; then
         sed -i "s|^NEO4J_URI=.*|NEO4J_URI=$NEO4J_URI|" .env
     else
         echo "NEO4J_URI=$NEO4J_URI" >> .env
     fi
     
-    # Reload environment
     set -a
     source .env
     set +a
@@ -470,17 +613,10 @@ print_success "Lambda functions updated"
 ################################################################################
 print_header "Step 8: Update Environment Configuration"
 
-# Update the source env file
-if ! grep -q "^API_GATEWAY_URL=" "$ENV_FILE"; then
-    echo "" >> "$ENV_FILE"
-    echo "# Deployed Infrastructure" >> "$ENV_FILE"
-fi
-
 sed -i "s|^API_GATEWAY_URL=.*|API_GATEWAY_URL=$API_URL|" "$ENV_FILE" 2>/dev/null || echo "API_GATEWAY_URL=$API_URL" >> "$ENV_FILE"
 sed -i "s|^S3_BUCKET=.*|S3_BUCKET=$S3_BUCKET|" "$ENV_FILE" 2>/dev/null || echo "S3_BUCKET=$S3_BUCKET" >> "$ENV_FILE"
 sed -i "s|^NEO4J_URI=.*|NEO4J_URI=$NEO4J_URI|" "$ENV_FILE" 2>/dev/null || echo "NEO4J_URI=$NEO4J_URI" >> "$ENV_FILE"
 
-# Copy back to .env
 cp "$ENV_FILE" .env
 
 print_success "Environment configuration updated in $ENV_FILE"
@@ -501,6 +637,10 @@ echo "  ✓ Lambda Functions: 4 deployed"
 echo "  ✓ API Gateway: $API_URL"
 if [ -n "$NEO4J_INSTANCE_ID" ] && [ "$NEO4J_INSTANCE_ID" != "None" ]; then
     echo "  ✓ Neo4j: $NEO4J_URI (Instance: $NEO4J_INSTANCE_ID)"
+fi
+if [ -n "${SAGEMAKER_NEMOTRON_ENDPOINT}" ]; then
+    echo "  ✓ SageMaker Nemotron: ${SAGEMAKER_NEMOTRON_ENDPOINT}"
+    echo "  ✓ SageMaker Embedding: ${SAGEMAKER_EMBEDDING_ENDPOINT}"
 fi
 echo ""
 echo "Endpoints:"
@@ -533,7 +673,7 @@ fi
 
 echo ""
 echo "To test the deployment:"
-echo "  ./deploy_karaka.sh --env $ENV_TYPE --test"
+echo "  ./deploy.sh --env $ENV_TYPE --test"
 echo ""
 echo "To cleanup all resources:"
-echo "  ./deploy_karaka.sh --cleanup"
+echo "  ./deploy.sh --cleanup"

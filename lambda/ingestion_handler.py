@@ -21,7 +21,7 @@ neo4j_client = Neo4jClient(config.NEO4J_URI, config.NEO4J_USERNAME, config.NEO4J
 nim_client = NIMClient(config.AWS_REGION, config.SAGEMAKER_NEMOTRON_ENDPOINT, config.SAGEMAKER_EMBEDDING_ENDPOINT)
 
 # Initialize pipeline components
-srl_parser = SRLParser()
+srl_parser = SRLParser(nim_client=nim_client)
 karaka_mapper = KarakaMapper()
 entity_resolver = EntityResolver(nim_client, neo4j_client, config.ENTITY_SIMILARITY_THRESHOLD)
 graph_builder = GraphBuilder(

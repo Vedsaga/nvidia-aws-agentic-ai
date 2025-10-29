@@ -14,15 +14,16 @@ from botocore.exceptions import ClientError
 # Configuration
 NEMOTRON_ENDPOINT_NAME = 'nemotron-karaka-endpoint'
 EMBEDDING_ENDPOINT_NAME = 'embedding-karaka-endpoint'
-INSTANCE_TYPE = 'ml.g5.2xlarge'  # Recommended for NIM models
+INSTANCE_TYPE = 'ml.g5.xlarge'  # Per hackathon constraints
 
 # SageMaker JumpStart Model IDs for NVIDIA NIM
 # Based on: https://aws.amazon.com/blogs/machine-learning/nvidia-nemotron-super-49b-and-nano-8b-reasoning-models-now-available-in-amazon-bedrock-marketplace-and-amazon-sagemaker-jumpstart/
-NEMOTRON_MODEL_ID = 'meta-textgeneration-llama-3-1-nemotron-nano-8b-instruct'
+# Model IDs verified from SageMaker JumpStart catalog
+NEMOTRON_MODEL_ID = 'nvidia-nemotron-nano-8b-nim'
 NEMOTRON_MODEL_VERSION = '*'  # Use latest version
 
-# For embedding, we'll use NV-Embed-v2 which is available via JumpStart
-EMBEDDING_MODEL_ID = 'nvidia-nv-embed-v2'
+# For embedding, we'll use NVIDIA NeMo Retriever (NV-EmbedQA)
+EMBEDDING_MODEL_ID = 'nvidia-llama3-2-nv-embedqa-1b-v2-nim'
 EMBEDDING_MODEL_VERSION = '*'
 
 
