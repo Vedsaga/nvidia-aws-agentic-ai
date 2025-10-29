@@ -79,8 +79,8 @@ deploy_sagemaker_nim() {
     print_header "SageMaker NVIDIA NIM Deployment"
     
     REGION="us-east-1"
-    # NVIDIA NIM requires ml.g6e.2xlarge minimum (ml.g5.xlarge is too small)
-    HACKATHON_INSTANCE_TYPE="ml.g6e.2xlarge"
+    # Use hackathon approved instance type
+    HACKATHON_INSTANCE_TYPE="ml.g5.xlarge"
     
     # Model Package ARNs from AWS Marketplace (shared account get ACCOUNT_ID from env)
     NEMOTRON_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:${AWS_ACCOUNT_ID}:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"

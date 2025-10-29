@@ -14,7 +14,7 @@ echo ""
 
 # Check if we can describe the model package
 echo "Checking NVIDIA NIM model package access..."
-NEMOTRON_ARN="arn:aws:sagemaker:us-east-1:865070037744:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"
+NEMOTRON_ARN="arn:aws:sagemaker:us-east-1:151534200269:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"
 
 if aws sagemaker describe-model-package --model-package-name "$NEMOTRON_ARN" --region us-east-1 > /tmp/model_check.json 2>&1; then
     echo "✓ Can access model package metadata"

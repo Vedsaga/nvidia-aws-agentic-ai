@@ -16,14 +16,9 @@ NEMOTRON_ENDPOINT_NAME = 'nemotron-karaka-endpoint'
 EMBEDDING_ENDPOINT_NAME = 'embedding-karaka-endpoint'
 INSTANCE_TYPE = 'ml.g5.xlarge'  # Per hackathon constraints
 
-# Use open-source models that don't require marketplace subscription
-# Llama 3.1 8B for reasoning (similar capability to Nemotron Nano)
-REASONING_MODEL_ID = 'meta-textgeneration-llama-3-1-8b-instruct'
-REASONING_MODEL_VERSION = '*'
-
-# BGE embeddings for semantic search (open-source, no subscription needed)
-EMBEDDING_MODEL_ID = 'huggingface-sentencesimilarity-bge-large-en-v1-5'
-EMBEDDING_MODEL_VERSION = '*'
+# NVIDIA NIM Model IDs for SageMaker JumpStart (hackathon requirement)
+NEMOTRON_MODEL_ID = 'nvidia-llama3-1-nemotron-nano-8b-v1'  # Llama 3.1 Nemotron Nano 8B V1
+EMBED_MODEL_ID = 'nvidia-nemotron-4-15b-nim'  # NVIDIA Nemotron-4 15B for embeddings
 
 
 def get_execution_role():
@@ -77,7 +72,7 @@ def get_execution_role():
             raise
 
 
-def deploy_jumpstart_model(sagemaker, model_id, model_version, endpoint_name, instance_type, role_arn):
+def deploy_jumpstart_model(sagemaker, model_id, endpoint_name, instance_type, role_arn):
     """Deploy a SageMaker JumpStart model to an endpoint"""
     try:
         # Check if endpoint already exists
@@ -103,52 +98,54 @@ def deploy_jumpstart_model(sagemaker, model_id, model_version, endpoint_name, in
         
         # Use SageMaker JumpStart SDK to deploy
         print(f"Deploying JumpStart model {model_id} to endpoint {endpoint_name}...")
-        print("  This will create the model, endpoint config, and endpoint automatically")
         
-        from sagemaker.jumpstart.model import JumpStartModel
+        try:
+            from sagemaker.jumpstart.model import JumpStartModel
+            
+            # Create JumpStart model
+            model = JumpStartModel(
+                model_id=model_id,
+                role=role_arn,
+                instance_type=instance_type
+            )
+            
+            # Deploy to endpoint
+            predictor = model.deploy(
+                endpoint_name=endpoint_name,
+                accept_eula=True  # Accept NVIDIA EULA
+            )
+            
+            print(f"✓ Endpoint {endpoint_name} deployed successfully")
+            
+        except ImportError:
+            print("✗ sagemaker SDK JumpStart not available, trying manual approach...")
+            deploy_model_manual(sagemaker, model_id, endpoint_name, instance_type, role_arn)
+        except Exception as e:
+            print(f"✗ Error with JumpStart deployment: {e}")
+            print("Trying manual approach...")
+            deploy_model_manual(sagemaker, model_id, endpoint_name, instance_type, role_arn)
         
-        # Create JumpStart model
-        model = JumpStartModel(
-            model_id=model_id,
-            model_version=model_version,
-            role=role_arn,
-            instance_type=instance_type
-        )
-        
-        # Deploy to endpoint
-        predictor = model.deploy(
-            endpoint_name=endpoint_name,
-            accept_eula=True  # Accept NVIDIA EULA
-        )
-        
-        print(f"✓ Endpoint {endpoint_name} deployed successfully")
-        
-    except ImportError:
-        print("✗ sagemaker SDK not found. Installing...")
-        import subprocess
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "sagemaker", "--upgrade"])
-        print("Please run the script again after installing sagemaker SDK")
-        sys.exit(1)
     except Exception as e:
         print(f"✗ Error deploying JumpStart model: {e}")
-        print("\nFalling back to manual deployment...")
-        deploy_model_manual(sagemaker, model_id, endpoint_name, instance_type, role_arn)
+        raise
 
 
 def deploy_model_manual(sagemaker, model_id, endpoint_name, instance_type, role_arn):
     """Manual deployment fallback using boto3 directly"""
-    print(f"Manual deployment for {endpoint_name}...")
+    print(f"Manual deployment for {endpoint_name} with model {model_id}...")
     
-    # Get model artifacts from JumpStart
-    # This is a simplified version - in production you'd query JumpStart registry
+    # For NVIDIA models, we need to find the model package ARN
+    # This is a simplified approach - in production you'd query the JumpStart registry
     model_name = f"{endpoint_name}-model"
     config_name = f"{endpoint_name}-config"
     
-    # For now, we'll use a placeholder approach
-    # In a real deployment, you'd need to get the actual model package ARN from JumpStart
-    print(f"⚠ Manual deployment requires model package ARN from JumpStart")
-    print(f"  Please deploy via SageMaker Console or use sagemaker SDK")
+    print(f"⚠ Manual deployment requires subscribing to the model in AWS Marketplace first")
+    print(f"  Please visit AWS Marketplace and subscribe to: {model_id}")
+    print(f"  Then get the model package ARN and update the deployment script")
     return
+
+
+
 
 
 def wait_for_endpoint(sagemaker, endpoint_name, timeout=1800):
@@ -209,28 +206,26 @@ def main():
     role_arn = get_execution_role()
     print()
     
-    # Deploy Llama 3.1 8B for reasoning
-    print("Step 2: Deploy Llama 3.1 8B Instruct (Reasoning Model)")
+    # Deploy NVIDIA NIM Nemotron Nano 8B
+    print("Step 2: Deploy NVIDIA NIM Nemotron Nano 8B (Reasoning Model)")
     print("-" * 60)
-    print("⚠ Using Llama 3.1 8B instead of NVIDIA NIM (no marketplace subscription needed)")
+    print("✓ Using hackathon-approved NVIDIA NIM model via JumpStart")
     deploy_jumpstart_model(
         sagemaker, 
-        REASONING_MODEL_ID, 
-        REASONING_MODEL_VERSION,
+        NEMOTRON_MODEL_ID,
         NEMOTRON_ENDPOINT_NAME, 
         INSTANCE_TYPE, 
         role_arn
     )
     print()
     
-    # Deploy BGE embeddings
-    print("Step 3: Deploy BGE-Large-EN-v1.5 (Embedding Model)")
+    # Deploy NVIDIA NIM Embedding Model
+    print("Step 3: Deploy NVIDIA NIM Embedding Model")
     print("-" * 60)
-    print("⚠ Using BGE embeddings instead of NVIDIA NIM (no marketplace subscription needed)")
+    print("✓ Using hackathon-approved NVIDIA NIM embedding model via JumpStart")
     deploy_jumpstart_model(
         sagemaker,
-        EMBEDDING_MODEL_ID,
-        EMBEDDING_MODEL_VERSION,
+        EMBED_MODEL_ID,
         EMBEDDING_ENDPOINT_NAME,
         INSTANCE_TYPE,
         role_arn
