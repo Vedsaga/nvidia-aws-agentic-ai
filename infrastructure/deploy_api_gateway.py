@@ -22,7 +22,8 @@ def get_lambda_arns(lambda_client, region, account_id):
         'ingestion': f'arn:aws:lambda:{region}:{account_id}:function:karaka-ingestion-handler',
         'status': f'arn:aws:lambda:{region}:{account_id}:function:karaka-status-handler',
         'query': f'arn:aws:lambda:{region}:{account_id}:function:karaka-query-handler',
-        'graph': f'arn:aws:lambda:{region}:{account_id}:function:karaka-graph-handler'
+        'graph': f'arn:aws:lambda:{region}:{account_id}:function:karaka-graph-handler',
+        'health': f'arn:aws:lambda:{region}:{account_id}:function:karaka-health-handler'
     }
     
     # Verify functions exist
@@ -312,8 +313,16 @@ def main():
     add_cors_options(apigw, api_id, graph_id)
     print()
     
+    # Create /health resource
+    print("Step 7: Create /health Endpoint")
+    print("-" * 60)
+    health_id = create_resource(apigw, api_id, root_id, 'health')
+    create_lambda_integration(apigw, lambda_client, api_id, health_id, 'GET', lambda_arns['health'], region, account_id)
+    add_cors_options(apigw, api_id, health_id)
+    print()
+    
     # Deploy API
-    print("Step 7: Deploy API")
+    print("Step 8: Deploy API")
     print("-" * 60)
     deploy_api(apigw, api_id, STAGE_NAME)
     print()
@@ -331,6 +340,7 @@ def main():
     print(f"  GET    {api_url}/ingest/status/{{job_id}}")
     print(f"  POST   {api_url}/query")
     print(f"  GET    {api_url}/graph")
+    print(f"  GET    {api_url}/health")
     print()
     print("Add this to your .env file:")
     print()

@@ -108,18 +108,31 @@ class NIMClient:
                 operation="text_generation"
             )
     
-    def get_embedding(self, text: str) -> List[float]:
+    def get_embedding(self, text: str, use_cache: bool = True) -> List[float]:
         """
-        Get embedding vector for text.
+        Get embedding vector for text with optional caching.
         
         Args:
             text: Input text to embed
+            use_cache: Whether to use cache (default: True)
             
         Returns:
             List[float]: Embedding vector
         """
+        # Try cache first
+        if use_cache:
+            try:
+                from src.utils.cache import embedding_cache
+                cached = embedding_cache.get(text)
+                if cached is not None:
+                    logger.debug(f"Cache hit for embedding: {text[:50]}...")
+                    return cached
+            except ImportError:
+                pass
+        
+        # Get from API
         if self.use_nvidia_api:
-            return self._call_nvidia_api_embedding(text)
+            embedding = self._call_nvidia_api_embedding(text)
         else:
             payload = {"input": text}
             response = self._invoke_with_retry(
@@ -130,11 +143,24 @@ class NIMClient:
             
             if isinstance(response, dict):
                 if "embedding" in response:
-                    return response["embedding"]
+                    embedding = response["embedding"]
                 elif "data" in response and len(response["data"]) > 0:
-                    return response["data"][0].get("embedding", [])
-            
-            raise ValueError(f"Unexpected embedding response format: {response}")
+                    embedding = response["data"][0].get("embedding", [])
+                else:
+                    raise ValueError(f"Unexpected embedding response format: {response}")
+            else:
+                raise ValueError(f"Unexpected embedding response format: {response}")
+        
+        # Store in cache
+        if use_cache:
+            try:
+                from src.utils.cache import embedding_cache
+                embedding_cache.put(text, embedding)
+                logger.debug(f"Cached embedding for: {text[:50]}...")
+            except ImportError:
+                pass
+        
+        return embedding
     
     def _call_nvidia_api_text(
         self,

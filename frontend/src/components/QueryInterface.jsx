@@ -66,7 +66,7 @@ const QueryInterface = () => {
         Query Knowledge Graph
       </h2>
 
-      <form onSubmit={handleSubmit} className="query-form">
+      <form onSubmit={handleSubmit} className="query-form" role="search" aria-label="Knowledge graph query form">
         <div className="form-group">
           <label htmlFor="question">Natural Language Question</label>
           <textarea
@@ -77,12 +77,18 @@ const QueryInterface = () => {
             disabled={loading}
             className="question-input"
             rows={3}
+            aria-required="true"
+            aria-invalid={error ? "true" : "false"}
+            aria-describedby={error ? "query-error" : undefined}
           />
         </div>
 
         <div className="form-row">
           <div className="form-group">
-            <label htmlFor="confidence">Min Confidence</label>
+            <label htmlFor="confidence">
+              Min Confidence
+              <span className="sr-only">(between 0 and 1)</span>
+            </label>
             <input
               type="number"
               id="confidence"
@@ -93,6 +99,7 @@ const QueryInterface = () => {
               step="0.1"
               disabled={loading}
               className="confidence-input"
+              aria-label="Minimum confidence threshold"
             />
           </div>
 
@@ -106,6 +113,7 @@ const QueryInterface = () => {
               placeholder="doc_123"
               disabled={loading}
               className="document-filter-input"
+              aria-label="Filter results by document ID"
             />
           </div>
         </div>
@@ -114,15 +122,17 @@ const QueryInterface = () => {
           type="submit"
           disabled={loading || !question.trim()}
           className="query-button"
+          aria-busy={loading}
+          aria-label={loading ? "Processing query" : "Submit query"}
         >
           {loading ? (
             <>
-              <Loader size={18} className="spinner" />
+              <Loader size={18} className="spinner" aria-hidden="true" />
               Processing...
             </>
           ) : (
             <>
-              <Search size={18} />
+              <Search size={18} aria-hidden="true" />
               Query
             </>
           )}
@@ -130,17 +140,17 @@ const QueryInterface = () => {
       </form>
 
       {error && (
-        <div className="status-message error">
-          <AlertCircle size={18} />
+        <div className="status-message error" role="alert" id="query-error" aria-live="assertive">
+          <AlertCircle size={18} aria-hidden="true" />
           <div>{error}</div>
         </div>
       )}
 
       {result && (
-        <div className="query-result">
+        <div className="query-result" role="region" aria-label="Query results">
           <div className="answer-section">
             <h3 className="result-title">
-              <BookOpen size={18} />
+              <BookOpen size={18} aria-hidden="true" />
               Answer
             </h3>
             {formatAnswerWithKarakas(result.answer, result.karakas)}

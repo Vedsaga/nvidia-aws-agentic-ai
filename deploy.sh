@@ -82,9 +82,9 @@ deploy_sagemaker_nim() {
     # NVIDIA NIM requires ml.g6e.2xlarge minimum (ml.g5.xlarge is too small)
     HACKATHON_INSTANCE_TYPE="ml.g6e.2xlarge"
     
-    # Model Package ARNs from AWS Marketplace (shared account get {ACCOUNT_ID} from env)
-    NEMOTRON_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:{env.ACCOUNT_ID}:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"
-    EMBED_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:{env.ACCOUNT_ID}:model-package/llama-3-2-nv-embedqa-1b-v2-nim-790d4634e92a3e39a57f47cf420fb687"
+    # Model Package ARNs from AWS Marketplace (shared account get ACCOUNT_ID from env)
+    NEMOTRON_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:${AWS_ACCOUNT_ID}:model-package/llama3-1-nemotron-nano-8b-v1-n-710c29bc58f0303aac54c77c70fc229a"
+    EMBED_MODEL_PACKAGE_ARN="arn:aws:sagemaker:us-east-1:${AWS_ACCOUNT_ID}:model-package/llama-3-2-nv-embedqa-1b-v2-nim-790d4634e92a3e39a57f47cf420fb687"
     
     # Resource names
     NEMOTRON_MODEL_NAME="nemotron-karaka-model"
@@ -475,6 +475,7 @@ declare -A FUNCTIONS=(
     ["karaka-status-handler"]="status_handler.lambda_handler"
     ["karaka-query-handler"]="query_handler.lambda_handler"
     ["karaka-graph-handler"]="graph_handler.lambda_handler"
+    ["karaka-health-handler"]="health_handler.lambda_handler"
 )
 
 for FUNC_NAME in "${!FUNCTIONS[@]}"; do

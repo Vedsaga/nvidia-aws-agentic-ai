@@ -24,7 +24,7 @@ answer_synthesizer = AnswerSynthesizer(nim_client, cypher_generator)
 
 def lambda_handler(event, context):
     """
-    Handle query requests.
+    Handle query requests with input validation and security.
     
     Event format:
     {
@@ -39,24 +39,57 @@ def lambda_handler(event, context):
         # Parse request
         body = json.loads(event.get('body', '{}')) if isinstance(event.get('body'), str) else event
         
-        question = body.get('question', '')
+        question = body.get('question', '').strip()
         min_confidence = body.get('min_confidence', 0.5)
         document_filter = body.get('document_filter')
         
-        logger.info(f"Processing query: question='{question}', min_confidence={min_confidence}, document_filter={document_filter}")
-        
+        # Input validation
         if not question:
             logger.warning("Question is missing from request")
             return {
                 "statusCode": 400,
                 "headers": {
                     "Content-Type": "application/json",
-                    "Access-Control-Allow-Origin": "*"
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
                 },
                 "body": json.dumps({
                     "error": "Question is required"
                 })
             }
+        
+        # Validate question length (prevent abuse)
+        if len(question) > 500:
+            logger.warning(f"Question too long: {len(question)} characters")
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
+                },
+                "body": json.dumps({
+                    "error": "Question must be less than 500 characters"
+                })
+            }
+        
+        # Validate confidence range
+        try:
+            min_confidence = float(min_confidence)
+            if not 0.0 <= min_confidence <= 1.0:
+                raise ValueError("Confidence must be between 0 and 1")
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid confidence value: {min_confidence}")
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
+                },
+                "body": json.dumps({
+                    "error": "min_confidence must be a number between 0 and 1"
+                })
+            }
+        
+        logger.info(f"Processing query: question='{question}', min_confidence={min_confidence}, document_filter={document_filter}")
         
         # Step 1: Decompose query to identify target Kāraka and constraints
         logger.info("Step 1: Decomposing query")
@@ -102,7 +135,11 @@ def lambda_handler(event, context):
             "statusCode": 200,
             "headers": {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*'),
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY"
             },
             "body": json.dumps(response)
         }
@@ -113,11 +150,11 @@ def lambda_handler(event, context):
             "statusCode": 400,
             "headers": {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
             },
             "body": json.dumps({
                 "error": "Invalid request",
-                "details": str(e)
+                "message": "Please check your input parameters"
             })
         }
     
@@ -127,10 +164,10 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "headers": {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
             },
             "body": json.dumps({
                 "error": "Internal server error",
-                "details": str(e)
+                "message": "An error occurred while processing your query"
             })
         }

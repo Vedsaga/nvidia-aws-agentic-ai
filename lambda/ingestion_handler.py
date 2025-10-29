@@ -50,14 +50,53 @@ def lambda_handler(event, context):
         # Parse request
         body = json.loads(event.get('body', '{}')) if isinstance(event.get('body'), str) else event
         
-        document_name = body.get('document_name', 'unknown.txt')
+        document_name = body.get('document_name', 'unknown.txt').strip()
         content = body.get('content', '')
+        
+        # Input validation
+        if not content:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
+                },
+                "body": json.dumps({
+                    "error": "Document content is required"
+                })
+            }
+        
+        # Validate document name (prevent path traversal)
+        if '..' in document_name or '/' in document_name:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
+                },
+                "body": json.dumps({
+                    "error": "Invalid document name"
+                })
+            }
         
         # Decode if base64
         try:
             content = base64.b64decode(content).decode('utf-8')
         except:
             pass  # Already plain text
+        
+        # Validate content size (10MB limit for Lambda)
+        if len(content) > 10 * 1024 * 1024:
+            return {
+                "statusCode": 400,
+                "headers": {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
+                },
+                "body": json.dumps({
+                    "error": "Document too large (max 10MB)"
+                })
+            }
         
         # Generate IDs
         job_id = str(uuid.uuid4())
@@ -151,7 +190,10 @@ def lambda_handler(event, context):
             "statusCode": 200,
             "headers": {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*'),
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type",
+                "X-Content-Type-Options": "nosniff"
             },
             "body": json.dumps({
                 "job_id": job_id,
@@ -179,10 +221,11 @@ def lambda_handler(event, context):
             "statusCode": 500,
             "headers": {
                 "Content-Type": "application/json",
-                "Access-Control-Allow-Origin": "*"
+                "Access-Control-Allow-Origin": os.getenv('ALLOWED_ORIGIN', '*')
             },
             "body": json.dumps({
-                "error": error_msg
+                "error": "Failed to process document",
+                "message": "An error occurred during document ingestion"
             })
         }
 
