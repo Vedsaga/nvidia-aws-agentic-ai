@@ -1,0 +1,16 @@
+# Lightweight local development
+neo4j>=5.14.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
+# Local AI models (no Docker needed)
+sentence-transformers>=2.2.0
+transformers>=4.30.0
+torch>=2.0.0
+
+# Local web server
+fastapi>=0.104.0
+uvicorn>=0.24.0
+
+# Development tools
+pytest>=7.4.0
