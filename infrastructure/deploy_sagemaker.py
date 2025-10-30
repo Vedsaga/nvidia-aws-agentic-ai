@@ -18,7 +18,7 @@ INSTANCE_TYPE = 'ml.g5.xlarge'  # Per hackathon constraints
 
 # NVIDIA NIM Model IDs for SageMaker JumpStart (hackathon requirement)
 NEMOTRON_MODEL_ID = 'nvidia-llama3-1-nemotron-nano-8b-v1'  # Llama 3.1 Nemotron Nano 8B V1
-EMBED_MODEL_ID = 'nvidia-nemotron-4-15b-nim'  # NVIDIA Nemotron-4 15B for embeddings
+EMBED_MODEL_ID = 'nvidia-llama-3-2-nv-embedqa-1b-v2'  # Llama-3.2-NV-EmbedQA-1B-v2
 
 
 def get_execution_role():
