@@ -523,11 +523,22 @@ class GSVRetryEngine:
                     if isinstance(parsed_data, dict) and "extractions" in parsed_data:
                         extractions = parsed_data["extractions"]
                         if isinstance(extractions, list) and len(extractions) > 0:
-                            candidates.append({
-                                "id": f"Candidate_{chr(65+i)}",  # A, B, C
-                                "data": parsed_data,
-                                "raw_response": response
-                            })
+                            # Validate karakas values are strings, not arrays
+                            valid = True
+                            for ext in extractions:
+                                if "karakas" in ext:
+                                    for role, value in ext["karakas"].items():
+                                        if isinstance(value, list):
+                                            print(f"⚠️", end="", flush=True)
+                                            valid = False
+                                            break
+                            
+                            if valid:
+                                candidates.append({
+                                    "id": f"Candidate_{chr(65+i)}",  # A, B, C
+                                    "data": parsed_data,
+                                    "raw_response": response
+                                })
             except Exception as e:
                 print(f"      ⚠️ Candidate {chr(65+i)} generation failed: {e}")
                 continue
@@ -2231,6 +2242,7 @@ print("✅ IngestionPipeline class defined")
 # ============================================================================
 # CELL 9: Query Pipeline Class Definition
 # ============================================================================
+# NOTE: Re-run this cell after any changes to QueryPipeline code
 class QueryPipeline:
     """Query pipeline with GSV-Retry decomposition and graph-based execution"""
     
@@ -2264,8 +2276,9 @@ class QueryPipeline:
         reasoning_trace = []
         
         # Step 1: Decompose query (direct call - GSV too slow for queries)
-        print("\n📋 [Step 1/3] Decomposing query...")
+        print("\n📋 [Step 1/3] Decomposing query (DIRECT CALL - NO GSV)...")
         print(f"   Query text: '{question}'")
+        print(f"   🚀 Calling LLM directly...", end="", flush=True)
         try:
             response = call_llm_isolated(
                 system_prompt=self.gsv_engine.prompts.get("query_decomposition_prompt"),
@@ -2274,6 +2287,7 @@ class QueryPipeline:
                 tokenizer=self.gsv_engine.tokenizer,
                 temperature=0.5
             )
+            print(" Done", flush=True)
             
             parsed_plan = parse_json_response(response)
             
@@ -2286,6 +2300,10 @@ class QueryPipeline:
                     "reasoning_trace": [],
                     "status": "ERROR"
                 }
+            
+            # Normalize format: if it's a list, wrap it in {"steps": [...]}
+            if isinstance(parsed_plan, list):
+                parsed_plan = {"steps": parsed_plan}
             
             # Wrap in golden_plan format for compatibility
             golden_plan = {"data": parsed_plan, "raw_response": response}
@@ -2358,14 +2376,19 @@ class QueryPipeline:
         """Translate plan to NetworkX operations and execute
         
         Args:
-            query_plan: Query plan from GSV-Retry
+            query_plan: Query plan from GSV-Retry (can be dict or list)
         
         Returns:
             Tuple of (document dicts, reasoning steps)
         """
         all_doc_nodes = []
         reasoning_trace = []
-        steps = query_plan.get("steps", [])
+        
+        # Handle both dict and list formats
+        if isinstance(query_plan, list):
+            steps = query_plan
+        else:
+            steps = query_plan.get("steps", [])
         
         if not steps:
             # Fallback: treat as single step
