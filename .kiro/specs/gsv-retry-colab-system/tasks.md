@@ -13,7 +13,7 @@
   - Ensure scoring prompts enforce JSON output with "reasoning" and "score" (1-100)
   - _Requirements: 3.2, 3.3, 3.4_
 
-- [ ] 3. Implement GraphSchema class with strict validation
+- [x] 3. Implement GraphSchema class with strict validation
   - Define NODE_TYPES constant: {"Kriya", "Entity", "Document"}
   - Define EDGE_RELATIONS constant with 10 relations: HAS_KARTĀ (changed from IS_KARTĀ_OF), HAS_KARMA, USES_KARANA, TARGETS_SAMPRADĀNA, FROM_APĀDĀNA, LOCATED_IN, OCCURS_AT, IS_SAME_AS, CAUSES, CITED_IN
   - Implement validate_node() method

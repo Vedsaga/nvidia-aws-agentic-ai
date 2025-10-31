@@ -145,7 +145,60 @@ print("✅ Core functions loaded")
 
 
 # ============================================================================
-# CELL 4: Entity Resolution
+# CELL 4: Graph Schema Validation
+# ============================================================================
+class GraphSchema:
+    """Strict schema enforcement for Karaka knowledge graph"""
+    
+    NODE_TYPES = {"Kriya", "Entity", "Document"}
+    
+    EDGE_RELATIONS = {
+        "HAS_KARTĀ",           # Kriyā → Entity (agent)
+        "HAS_KARMA",           # Kriyā → Entity (patient)
+        "USES_KARANA",         # Kriyā → Entity (instrument)
+        "TARGETS_SAMPRADĀNA",  # Kriyā → Entity (recipient)
+        "FROM_APĀDĀNA",        # Kriyā → Entity (source)
+        "LOCATED_IN",          # Kriyā → Entity (spatial location)
+        "OCCURS_AT",           # Kriyā → Entity (temporal location)
+        "IS_SAME_AS",          # Entity → Entity (coreference)
+        "CAUSES",              # Kriyā → Kriyā (causality)
+        "CITED_IN"             # Kriyā → Document (provenance)
+    }
+    
+    def validate_node(self, node_id: str, attrs: dict) -> bool:
+        """Validate node has required type attribute"""
+        if not attrs:
+            print(f"❌ Schema violation: Node {node_id} has no attributes")
+            return False
+        
+        node_type = attrs.get("type") or attrs.get("node_type")
+        if not node_type:
+            print(f"❌ Schema violation: Node {node_id} missing 'type' attribute")
+            return False
+        
+        if node_type not in self.NODE_TYPES:
+            print(f"❌ Schema violation: Node {node_id} has invalid type '{node_type}'. Must be one of {self.NODE_TYPES}")
+            return False
+        
+        return True
+    
+    def validate_edge(self, source: str, target: str, relation: str) -> bool:
+        """Validate edge has valid relation attribute"""
+        if not relation:
+            print(f"❌ Schema violation: Edge {source} → {target} missing 'relation' attribute")
+            return False
+        
+        if relation not in self.EDGE_RELATIONS:
+            print(f"❌ Schema violation: Edge {source} → {target} has invalid relation '{relation}'. Must be one of {self.EDGE_RELATIONS}")
+            return False
+        
+        return True
+
+print("✅ Graph schema loaded")
+
+
+# ============================================================================
+# CELL 5: Entity Resolution
 # ============================================================================
 class EntityResolver:
     def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
@@ -197,7 +250,7 @@ print("✅ Entity resolver loaded")
 
 
 # ============================================================================
-# CELL 5: Kāraka Knowledge Graph
+# CELL 6: Kāraka Knowledge Graph
 # ============================================================================
 class KarakaGraph:
     def __init__(self, embedding_model, embedding_tokenizer):
@@ -357,7 +410,7 @@ print("✅ Graph class loaded")
 
 
 # ============================================================================
-# CELL 6: INGESTION STEP 1 - Load & Refine Documents
+# CELL 7: INGESTION STEP 1 - Load & Refine Documents
 # ============================================================================
 def load_and_refine_documents(docs_folder: str = "./test_documents") -> Dict[str, List[str]]:
     """
@@ -404,7 +457,7 @@ refined_docs = load_and_refine_documents()
 
 
 # ============================================================================
-# CELL 7: INGESTION STEP 2 - Extract Kārakas from Sentences
+# CELL 8: INGESTION STEP 2 - Extract Kārakas from Sentences
 # ============================================================================
 def extract_karakas_from_sentence(sentence: str, model, tokenizer) -> List[Dict]:
     """
@@ -501,7 +554,7 @@ ingest_karakas_to_graph(refined_docs, karaka_graph, llm_model, tokenizer)
 
 
 # ============================================================================
-# CELL 8: QUERY STEP 1 - Decompose Query into Kārakas
+# CELL 9: QUERY STEP 1 - Decompose Query into Kārakas
 # ============================================================================
 def decompose_query_to_karakas(question: str, model, tokenizer) -> Optional[Dict]:
     """
@@ -540,7 +593,7 @@ print("✅ Query decomposition function loaded")
 
 
 # ============================================================================
-# CELL 9: QUERY STEP 2 - Execute Search & Extract References
+# CELL 10: QUERY STEP 2 - Execute Search & Extract References
 # ============================================================================
 def execute_search_and_extract(search_plan: Dict, graph: KarakaGraph) -> Dict:
     """
@@ -607,7 +660,7 @@ print("✅ Search execution function loaded")
 
 
 # ============================================================================
-# CELL 10: QUERY STEP 3 - Form Answer with Citations
+# CELL 11: QUERY STEP 3 - Form Answer with Citations
 # ============================================================================
 def form_answer_with_citations(question: str, search_result: Dict, model, tokenizer) -> Dict:
     """
@@ -661,7 +714,7 @@ print("✅ Answer formation function loaded")
 
 
 # ============================================================================
-# CELL 11: Complete Query Pipeline
+# CELL 12: Complete Query Pipeline
 # ============================================================================
 def query_pipeline(question: str, graph: KarakaGraph, model, tokenizer) -> Dict:
     """
@@ -694,7 +747,7 @@ print("✅ Query pipeline loaded")
 
 
 # ============================================================================
-# CELL 12: Run Queries
+# CELL 13: Run Queries
 # ============================================================================
 print(f"\n{'='*80}")
 print(f"QUERY PHASE (Each LLM call is isolated)")
