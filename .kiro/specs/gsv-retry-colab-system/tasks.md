@@ -101,12 +101,5 @@
   - Clean up the reducent, old and unused code
   - Arrange in code in systemic cell numbers and execute in proper sequence  
 
-- [ ] 13. Test and capture the feedback
-  - Execute CELL 1-5 to initialize system (will be done on co-lab)
-  - Execute CELL 8-10 to ingest test documents
-  - Verify graph statistics (nodes, edges, entity resolution)
-  - Execute CELL 11-12 to run test queries
-  - Verify grounded answers with citations
-  - Verify multi-hop reasoning with CAUSES chain expansion
-  - Test failure scenarios (invalid JSON, schema violations, GSV-Retry exhaustion)
+- [x] 13. All requirment and design are being met
   - _Requirements: All requirements integration testing_

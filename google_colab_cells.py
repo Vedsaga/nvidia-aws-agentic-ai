@@ -198,7 +198,7 @@ class GraphSchema:
 class FAISSVectorStore:
     """Wrapper for FAISS index with document ID mapping"""
     
-    def __init__(self, dimension: int = 768):
+    def __init__(self, dimension: int = 2048):
         self.dimension = dimension
         self.index = faiss.IndexFlatL2(dimension)
         self.doc_id_map = []
@@ -250,88 +250,44 @@ def load_prompts(filepath: str = "prompts.json") -> dict:
     
     Returns:
         Dictionary of prompts
+    
+    Raises:
+        FileNotFoundError: If prompts.json is not found
+        ValueError: If required prompts are missing
     """
     if not os.path.exists(filepath):
-        print(f"⚠️  {filepath} not found, creating default prompts...")
-        default_prompts = {
-            "kriya_extraction_prompt": """You are a semantic role labeling expert specializing in Pāṇinian kāraka analysis.
-Extract the verb (Kriyā) and its semantic roles (kārakas) from the given text.
-
-Output JSON format:
-{
-  "verb": "action verb",
-  "karakas": {
-    "KARTA": "agent entity",
-    "KARMA": "patient entity",
-    "KARANA": "instrument entity",
-    "SAMPRADANA": "recipient entity",
-    "APADANA": "source entity",
-    "ADHIKARANA_SPATIAL": "spatial location",
-    "ADHIKARANA_TEMPORAL": "temporal location"
-  },
-  "coreferences": [
-    {"pronoun": "he", "context": "likely refers to..."}
-  ]
-}
-
-Include only kārakas present in the text. Add coreferences field for pronouns.""",
-            
-            "kriya_extraction_feedback_prompt": "Previous attempt failed: {feedback}\n\nPlease correct the extraction.",
-            
-            "kriya_scoring_prompt": """Score this Kriyā extraction from 1-100 based on:
-- Correct verb identification
-- Accurate kāraka role assignment
-- Completeness of extraction
-- Adherence to Pāṇinian principles
-
-Return JSON: {"reasoning": "explanation", "score": 85}""",
-            
-            "kriya_verification_prompt": """You are a Pāṇinian grammar verifier. Apply these rules:
-- KARTĀ (agent): performs the action
-- KARMA (patient): undergoes the action
-- KARANA (instrument): means by which action is done
-- SAMPRADĀNA (recipient): for whom action is done
-- APĀDĀNA (source): from which action originates
-- ADHIKARANA (location): where/when action occurs
-
-Select the best candidate or return "ALL_INVALID" if none comply.
-Return JSON: {"choice": "Candidate_A", "reasoning": "explanation"}""",
-            
-            "query_decomposition_prompt": """Decompose this query into a multi-hop graph traversal plan.
-
-Output JSON format:
-{
-  "steps": [
-    {
-      "verb": "action",
-      "karakas": {"KARTA": "entity"},
-      "follow_causes": true
-    }
-  ]
-}""",
-            
-            "query_scoring_prompt": """Score this query plan from 1-100 based on:
-- Logical decomposition
-- Executability on graph
-- Completeness
-
-Return JSON: {"reasoning": "explanation", "score": 85}""",
-            
-            "query_verification_prompt": """Verify this query plan is executable and logical.
-Select the best plan or return "ALL_INVALID".
-Return JSON: {"choice": "Candidate_A", "reasoning": "explanation"}"""
-        }
-        
-        with open(filepath, 'w') as f:
-            json.dump(default_prompts, f, indent=2)
-        
-        print(f"✅ Created {filepath} with default prompts")
-        return default_prompts
+        raise FileNotFoundError(
+            f"❌ ERROR: {filepath} not found!\n"
+            f"Please ensure prompts.json exists in the current directory.\n"
+            f"Required prompts: kriya_extraction_prompt, kriya_extraction_feedback_prompt, "
+            f"kriya_scoring_prompt, kriya_verification_prompt, query_decomposition_prompt, "
+            f"query_scoring_prompt, query_verification_prompt, sentence_splitting_prompt"
+        )
     
     with open(filepath, 'r') as f:
         prompts = json.load(f)
     
-    print(f"✅ Loaded prompts from {filepath}")
+    # Validate required prompts exist
+    required_prompts = [
+        "kriya_extraction_prompt",
+        "kriya_extraction_feedback_prompt",
+        "kriya_scoring_prompt",
+        "kriya_verification_prompt",
+        "query_decomposition_prompt",
+        "query_scoring_prompt",
+        "query_verification_prompt",
+        "sentence_split_prompt",
+        "coreference_resolution_prompt"
+    ]
+    
+    missing_prompts = [p for p in required_prompts if p not in prompts]
+    if missing_prompts:
+        raise ValueError(
+            f"❌ ERROR: Missing required prompts in {filepath}:\n"
+            f"{', '.join(missing_prompts)}"
+        )
+    
+    print(f"✅ Loaded {len(prompts)} prompts from {filepath}")
     return prompts
 
 # Load prompts
@@ -519,11 +475,24 @@ class GSVRetryEngine:
                 
                 parsed_data = parse_json_response(response)
                 if parsed_data:
-                    candidates.append({
-                        "id": f"Candidate_{chr(65+i)}",  # A, B, C
-                        "data": parsed_data,
-                        "raw_response": response
-                    })
+                    # Keep the full structure with extractions array
+                    # Normalize to {"extractions": [...]} format
+                    if isinstance(parsed_data, list):
+                        # Direct list format
+                        parsed_data = {"extractions": parsed_data}
+                    elif isinstance(parsed_data, dict) and "verb" in parsed_data:
+                        # Single extraction format - wrap in array
+                        parsed_data = {"extractions": [parsed_data]}
+                    
+                    # Validate we have extractions
+                    if isinstance(parsed_data, dict) and "extractions" in parsed_data:
+                        extractions = parsed_data["extractions"]
+                        if isinstance(extractions, list) and len(extractions) > 0:
+                            candidates.append({
+                                "id": f"Candidate_{chr(65+i)}",  # A, B, C
+                                "data": parsed_data,
+                                "raw_response": response
+                            })
             except Exception as e:
                 print(f"      ⚠️ Candidate {chr(65+i)} generation failed: {e}")
                 continue
@@ -696,7 +665,7 @@ class KarakaGraphV2:
         """
         self.graph = nx.MultiDiGraph()
         self.schema = GraphSchema()
-        self.vector_store = FAISSVectorStore(dimension=768)
+        self.vector_store = FAISSVectorStore(dimension=2048)
         self.entity_resolver = EntityResolver(embedding_model, embedding_tokenizer)
         
         # Indexes for fast lookup
@@ -1084,13 +1053,13 @@ class IngestionPipeline:
         self._print_statistics()
     
     def _load_documents(self, docs_folder: str) -> Dict[str, List[str]]:
-        """Load documents from folder
+        """Load documents from folder and split into sentences using robust LLM pipeline
         
         Args:
             docs_folder: Path to folder containing documents
         
         Returns:
-            Dict mapping doc_id to list of lines
+            Dict mapping doc_id to list of sentences
         """
         if not os.path.exists(docs_folder):
             print(f"❌ ERROR: Document folder '{docs_folder}' not found!")
@@ -1103,21 +1072,208 @@ class IngestionPipeline:
         
         print(f"   Found {len(text_files)} document(s)")
         
+        # Create processed folder
+        processed_folder = Path(docs_folder) / "processed"
+        processed_folder.mkdir(exist_ok=True)
+        
         refined_docs = {}
         
         for filepath in text_files:
             doc_path = Path(filepath)
             doc_id = doc_path.stem
+            processed_file = processed_folder / f"{doc_id}_sentences.txt"
             
             print(f"   📄 {doc_path.name}")
             
-            with open(filepath, 'r', encoding='utf-8') as f:
-                lines = [line.strip() for line in f.readlines() if line.strip()]
+            # Check if processed file exists
+            if processed_file.exists():
+                print(f"      ✓ Loading from processed file: {processed_file.name}")
+                with open(processed_file, 'r', encoding='utf-8') as f:
+                    sentences = [line.strip() for line in f.readlines() if line.strip()]
+            else:
+                # Read original content
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                
+                # Use LLM to split into sentences
+                print(f"      🤖 Using robust LLM sentence splitter...")
+                sentences = self._llm_sentence_split(content)
+                
+                # Save processed sentences
+                with open(processed_file, 'w', encoding='utf-8') as f:
+                    for sent in sentences:
+                        f.write(sent + '\n')
+                print(f"      ✓ Saved to: {processed_file.name}")
             
-            refined_docs[doc_id] = lines
-            print(f"      ✓ Loaded {len(lines)} line(s)")
+            refined_docs[doc_id] = sentences
+            print(f"      ✓ Loaded {len(sentences)} sentence(s)")
         
         return refined_docs
+
+    # ========================================================================
+    # NEW ROBUST SENTENCE SPLITTING PIPELINE
+    # ========================================================================
+
+    def _llm_sentence_split(self, text: str) -> List[str]:
+        """Smart chunking LLM sentence splitting with retry on hallucination"""
+        print(f"      🤖 Starting smart-chunk LLM sentence split...")
+        
+        all_sentences = []
+        MAX_CHARS = 800  # ~200 tokens, safe for LLM processing
+        
+        # Step 1: Smart chunking - split text into processable chunks
+        chunks = self._smart_chunk_text(text, MAX_CHARS)
+        print(f"      📊 Created {len(chunks)} chunks to process")
+        
+        # Step 2: Process each chunk with LLM
+        for chunk_num, chunk in enumerate(chunks, 1):
+            sentences = self._split_with_retry(chunk)
+            all_sentences.extend(sentences)
+            print(f"      ✓ Chunk {chunk_num}/{len(chunks)}: {len(sentences)} sentences")
+        
+        print(f"      ✅ Split complete: {len(all_sentences)} total sentences")
+        return all_sentences
+    
+    def _smart_chunk_text(self, text: str, max_chars: int) -> List[str]:
+        """Smart chunking that respects sentence boundaries"""
+        # First, do a rough split on likely sentence boundaries
+        rough_splits = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
+        
+        chunks = []
+        current_chunk = ""
+        
+        for fragment in rough_splits:
+            # If adding this fragment exceeds limit, save current chunk
+            if current_chunk and len(current_chunk) + len(fragment) + 1 > max_chars:
+                chunks.append(current_chunk.strip())
+                current_chunk = fragment
+            else:
+                current_chunk = current_chunk + " " + fragment if current_chunk else fragment
+        
+        # Add remaining chunk
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+    
+
+    
+    def _split_with_retry(self, text: str, max_retries: int = 3) -> List[str]:
+        """Step 3 & 4: Ask LLM to split, verify no hallucination, retry if needed"""
+        system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
+        
+        if not system_prompt:
+            return self._fallback_sentence_split(text)
+        
+        for attempt in range(max_retries):
+            try:
+                response = call_llm_isolated(
+                    system_prompt=system_prompt,
+                    user_prompt=text,
+                    model=self.gsv_engine.model,
+                    tokenizer=self.gsv_engine.tokenizer,
+                    max_tokens=1000
+                )
+                
+                result = parse_json_response(response)
+                
+                if result and isinstance(result, list):
+                    proposed_sentences = [str(s).strip() for s in result if str(s).strip()]
+                    
+                    # Step 4a: Align LLM output to match original punctuation
+                    aligned_sentences = self._align_punctuation(text, proposed_sentences)
+                    
+                    # Step 4b: Verify no hallucination (strict check)
+                    if self._verify_fidelity(text, aligned_sentences):
+                        return aligned_sentences
+                    else:
+                        print(f"      ⚠️ Attempt {attempt+1}: Hallucination detected, retrying...")
+                        continue
+                else:
+                    print(f"      ⚠️ Attempt {attempt+1}: Invalid response format, retrying...")
+                    continue
+                    
+            except Exception as e:
+                print(f"      ⚠️ Attempt {attempt+1} failed: {e}")
+                continue
+        
+        # All retries exhausted, use fallback
+        print(f"      ❌ All retries exhausted, using fallback regex")
+        return self._fallback_sentence_split(text)
+    
+    def _align_punctuation(self, original: str, sentences: List[str]) -> List[str]:
+        """Align LLM output punctuation to match original text"""
+        joined = "".join(sentences)
+        
+        # Build character mapping from original to LLM output
+        # This handles quote normalization: " → ' or vice versa
+        aligned = []
+        orig_idx = 0
+        
+        for sentence in sentences:
+            aligned_sentence = ""
+            for char in sentence:
+                # Skip whitespace in alignment
+                while orig_idx < len(original) and original[orig_idx].isspace():
+                    orig_idx += 1
+                
+                if orig_idx >= len(original):
+                    aligned_sentence += char
+                    continue
+                
+                orig_char = original[orig_idx]
+                
+                # If characters match (case-insensitive), use original
+                if char.lower() == orig_char.lower():
+                    aligned_sentence += orig_char
+                    orig_idx += 1
+                # If both are quotes (any type), use original quote style
+                elif char in "\"''"'" and orig_char in "\"''"'":
+                    aligned_sentence += orig_char
+                    orig_idx += 1
+                # If both are dashes, use original dash style
+                elif char in "-–—" and orig_char in "-–—":
+                    aligned_sentence += orig_char
+                    orig_idx += 1
+                else:
+                    # Character mismatch - keep LLM's version
+                    aligned_sentence += char
+                    orig_idx += 1
+            
+            aligned.append(aligned_sentence)
+        
+        return aligned
+    
+    def _verify_fidelity(self, original_text: str, proposed_sentences: List[str]) -> bool:
+        """Verify LLM didn't hallucinate by comparing normalized text (strict check)"""
+        original_norm = re.sub(r'\s+', '', original_text).lower()
+        proposed_norm = re.sub(r'\s+', '', "".join(proposed_sentences)).lower()
+        return original_norm == proposed_norm
+
+    def _fallback_sentence_split(self, text: str) -> List[str]:
+        """
+        Simple programmatic sentence splitting using regex.
+        Used for pre-splitting and as a final fallback.
+        """
+        # This regex is weak for *correctness* but good for *pre-splitting*
+        # because it splits *too much*, creating small, safe fragments.
+        # It splits on period/question/exclamation followed by whitespace.
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        
+        # We must also clean up the newlines that you might have,
+        # otherwise they become part of the chunk.
+        cleaned_sentences = []
+        for s in sentences:
+            # Replace all forms of newlines and excess whitespace with a single space
+            s_cleaned = re.sub(r'\s+', ' ', s).strip()
+            if s_cleaned:
+                cleaned_sentences.append(s_cleaned)
+        
+        return cleaned_sentences
+    
+    # ========================================================================
+    # END OF NEW SPLITTING PIPELINE
+    # ========================================================================
     
     def _embed_and_store(self, refined_docs: Dict[str, List[str]]):
         """Create Document nodes and FAISS embeddings
@@ -1150,7 +1306,10 @@ class IngestionPipeline:
                     doc_success += 1
                     processed += 1
                 except Exception as e:
-                    print(f"\n      ⚠️ Failed to embed line {line_num}: {str(e)[:50]}")
+                    print(f"\n      ⚠️ Failed to embed line {line_num}:")
+                    print(f"         Error: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
                     doc_failed += 1
                     failed += 1
                 
@@ -1172,12 +1331,14 @@ class IngestionPipeline:
         Returns:
             Embedding vector
         """
+        # Assumes embedding_tokenizer and embedding_model are BERT-like
         inputs = self.embedding_tokenizer([text], padding=True, truncation=True, return_tensors='pt')
         inputs = {k: v.to(self.embedding_model.device) for k, v in inputs.items()}
         
         with torch.no_grad():
             outputs = self.embedding_model(**inputs)
         
+        # Assumes average_pool is defined elsewhere
         embedding = average_pool(outputs.last_hidden_state, inputs["attention_mask"])
         return embedding.cpu().numpy()[0]
     
@@ -1510,16 +1671,7 @@ class IngestionPipeline:
         if not context_texts:
             return hint  # Fallback to hint if no context
         
-        system_prompt = """You are a coreference resolution expert. Given a pronoun and surrounding context, identify what entity the pronoun refers to.
-
-Return JSON with this structure:
-{
-  "referent": "<entity name or null if unclear>",
-  "confidence": "<high|medium|low>",
-  "reasoning": "<brief explanation>"
-}
-
-Only return a referent if you are confident. Return null if unclear."""
+        system_prompt = self.gsv_engine.prompts.get("coreference_resolution_prompt", "")
         
         context_str = "\n".join([f"- {text}" for text in context_texts[:5]])
         hint_str = f"\nExtraction hint: '{pronoun}' likely refers to '{hint}' ({hint_context})" if hint else ""
