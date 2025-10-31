@@ -49,7 +49,7 @@
   - Implement get_cited_documents() to retrieve Document node texts
   - _Requirements: 2.4, 2.5, 2.6, 4.4, 4.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
-- [ ] 7. Implement IngestionPipeline class
+- [x] 7. Implement IngestionPipeline class
   - Create IngestionPipeline class with graph, gsv_engine, embedding_model
   - Implement ingest_documents() orchestrator method
   - Implement _embed_and_store() for Document nodes and FAISS embeddings

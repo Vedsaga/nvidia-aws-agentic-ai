@@ -957,6 +957,292 @@ print("✅ KarakaGraphV2 class defined")
 
 
 # ============================================================================
+# CELL 7.5: Ingestion Pipeline
+# ============================================================================
+class IngestionPipeline:
+    """Orchestrates document loading, embedding, extraction, and post-processing"""
+    
+    def __init__(self, graph: KarakaGraphV2, gsv_engine: GSVRetryEngine, embedding_model, embedding_tokenizer):
+        """Initialize ingestion pipeline
+        
+        Args:
+            graph: KarakaGraphV2 instance
+            gsv_engine: GSVRetryEngine instance
+            embedding_model: Model for document embeddings
+            embedding_tokenizer: Tokenizer for embedding model
+        """
+        self.graph = graph
+        self.gsv_engine = gsv_engine
+        self.embedding_model = embedding_model
+        self.embedding_tokenizer = embedding_tokenizer
+        
+        # Statistics
+        self.stats = {
+            'total_lines': 0,
+            'successful_extractions': 0,
+            'failed_extractions': 0,
+            'total_kriyas': 0,
+            'total_entities': 0,
+            'total_edges': 0
+        }
+    
+    def ingest_documents(self, docs_folder: str = "./test_documents"):
+        """Main ingestion orchestrator
+        
+        Args:
+            docs_folder: Path to folder containing documents
+        """
+        print(f"\n{'='*80}")
+        print(f"INGESTION PIPELINE")
+        print(f"{'='*80}")
+        
+        # Step 1: Load and embed documents
+        print(f"\n📄 Step 1: Loading and embedding documents...")
+        refined_docs = self._load_documents(docs_folder)
+        if not refined_docs:
+            print("❌ No documents loaded. Aborting ingestion.")
+            return
+        
+        self._embed_and_store(refined_docs)
+        
+        # Step 2: Extract Kriyās with GSV-Retry
+        print(f"\n🔍 Step 2: Extracting Kriyās with GSV-Retry...")
+        self._extract_kriyas(refined_docs)
+        
+        # Print final statistics
+        self._print_statistics()
+    
+    def _load_documents(self, docs_folder: str) -> Dict[str, List[str]]:
+        """Load documents from folder
+        
+        Args:
+            docs_folder: Path to folder containing documents
+        
+        Returns:
+            Dict mapping doc_id to list of lines
+        """
+        if not os.path.exists(docs_folder):
+            print(f"❌ ERROR: Document folder '{docs_folder}' not found!")
+            return {}
+        
+        text_files = list(Path(docs_folder).glob("*.txt")) + list(Path(docs_folder).glob("*.md"))
+        if not text_files:
+            print(f"❌ ERROR: No .txt or .md files found in '{docs_folder}'")
+            return {}
+        
+        print(f"   Found {len(text_files)} document(s)")
+        
+        refined_docs = {}
+        
+        for filepath in text_files:
+            doc_path = Path(filepath)
+            doc_id = doc_path.stem
+            
+            print(f"   📄 {doc_path.name}")
+            
+            with open(filepath, 'r', encoding='utf-8') as f:
+                lines = [line.strip() for line in f.readlines() if line.strip()]
+            
+            refined_docs[doc_id] = lines
+            print(f"      ✓ Loaded {len(lines)} line(s)")
+        
+        return refined_docs
+    
+    def _embed_and_store(self, refined_docs: Dict[str, List[str]]):
+        """Create Document nodes and FAISS embeddings
+        
+        Args:
+            refined_docs: Dict mapping doc_id to list of lines
+        """
+        print(f"   Creating Document nodes and embeddings...")
+        
+        total_docs = sum(len(lines) for lines in refined_docs.values())
+        processed = 0
+        
+        for doc_id, lines in refined_docs.items():
+            for line_num, text in enumerate(lines, 1):
+                # Create Document node
+                doc_node_id = self.graph.add_document_node(doc_id, line_num, text)
+                
+                # Generate embedding
+                embedding = self._encode_text(text)
+                
+                # Store in FAISS
+                self.graph.vector_store.add(doc_node_id, embedding)
+                
+                processed += 1
+                if processed % 10 == 0 or processed == total_docs:
+                    print(f"      Progress: {processed}/{total_docs} documents embedded", end='\r')
+        
+        print(f"\n   ✅ Embedded {total_docs} documents")
+    
+    def _encode_text(self, text: str) -> np.ndarray:
+        """Encode text using embedding model
+        
+        Args:
+            text: Text to encode
+        
+        Returns:
+            Embedding vector
+        """
+        inputs = self.embedding_tokenizer([text], padding=True, truncation=True, return_tensors='pt')
+        inputs = {k: v.to(self.embedding_model.device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            outputs = self.embedding_model(**inputs)
+        
+        embedding = average_pool(outputs.last_hidden_state, inputs["attention_mask"])
+        return embedding.cpu().numpy()[0]
+    
+    def _extract_kriyas(self, refined_docs: Dict[str, List[str]]):
+        """Extract Kriyās from all documents using GSV-Retry
+        
+        Args:
+            refined_docs: Dict mapping doc_id to list of lines
+        """
+        self.stats['total_lines'] = sum(len(lines) for lines in refined_docs.values())
+        processed = 0
+        
+        for doc_id, lines in refined_docs.items():
+            print(f"\n   📄 Processing {doc_id}...")
+            
+            for line_num, text in enumerate(lines, 1):
+                processed += 1
+                line_ref = f"{doc_id}_L{line_num}"
+                
+                print(f"      [{processed}/{self.stats['total_lines']}] {line_ref}: ", end='')
+                
+                # Extract with GSV-Retry
+                golden_candidate = self.gsv_engine.extract_with_retry(
+                    text=text,
+                    extraction_type="kriya",
+                    line_ref=line_ref
+                )
+                
+                if golden_candidate:
+                    # Write to graph
+                    self._write_to_graph(golden_candidate, doc_id, line_num, text)
+                    print(f"✅")
+                    self.stats['successful_extractions'] += 1
+                else:
+                    print(f"❌ Failed")
+                    self.stats['failed_extractions'] += 1
+    
+    def _write_to_graph(self, golden_candidate: Dict, doc_id: str, line_number: int, text: str):
+        """Write verified Kriyā to graph with schema compliance
+        
+        Args:
+            golden_candidate: Golden candidate from GSV-Retry
+            doc_id: Document ID
+            line_number: Line number
+            text: Original text
+        """
+        # Extract data from golden candidate
+        data = golden_candidate.get("data", {})
+        
+        # Handle both single extraction and multiple extractions
+        extractions = data.get("extractions", [])
+        if not extractions:
+            # Fallback: treat entire data as single extraction
+            extractions = [data]
+        
+        for extraction in extractions:
+            verb = extraction.get("verb")
+            karakas = extraction.get("karakas", {})
+            coreferences = extraction.get("coreferences", [])
+            
+            if not verb:
+                continue
+            
+            # Create Kriyā node
+            kriya_id = self.graph.add_kriya_node(verb, doc_id, line_number)
+            self.stats['total_kriyas'] += 1
+            
+            # Create Entity nodes and kāraka edges (ALL edges flow FROM Kriyā)
+            for karaka_type, entity_mention in karakas.items():
+                if not entity_mention:
+                    continue
+                
+                # Resolve entity to canonical form
+                canonical_entity = self.graph.entity_resolver.resolve_entity(entity_mention)
+                entity_id = self.graph.add_entity_node(canonical_entity)
+                
+                # Track unique entities
+                if entity_id not in [n for n in self.graph.graph.nodes() if self.graph.graph.nodes[n].get('type') == 'Entity']:
+                    self.stats['total_entities'] += 1
+                
+                # Map kāraka type to edge relation
+                relation = self._map_karaka_to_relation(karaka_type)
+                
+                # Add edge FROM Kriyā TO Entity
+                self.graph.add_edge(kriya_id, entity_id, relation)
+                self.stats['total_edges'] += 1
+            
+            # Store coreference hints for post-processing
+            for coref in coreferences:
+                pronoun = coref.get("pronoun")
+                likely_referent = coref.get("likely_referent")
+                context = coref.get("context", "")
+                
+                if pronoun:
+                    pronoun_entity_id = self.graph.add_entity_node(pronoun)
+                    # Store hint as node attribute
+                    self.graph.graph.nodes[pronoun_entity_id]["coref_context"] = context
+                    if likely_referent:
+                        self.graph.graph.nodes[pronoun_entity_id]["coref_hint"] = likely_referent
+            
+            # Add citation edge (FROM Kriyā TO Document)
+            doc_node_id = f"{doc_id}_L{line_number}"
+            self.graph.add_edge(kriya_id, doc_node_id, "CITED_IN")
+            self.stats['total_edges'] += 1
+    
+    def _map_karaka_to_relation(self, karaka_type: str) -> str:
+        """Map Pāṇinian kāraka to graph relation (all flow FROM Kriyā)
+        
+        Args:
+            karaka_type: Kāraka type from extraction
+        
+        Returns:
+            Graph relation name
+        """
+        mapping = {
+            "KARTA": "HAS_KARTĀ",
+            "KARMA": "HAS_KARMA",
+            "KARANA": "USES_KARANA",
+            "SAMPRADANA": "TARGETS_SAMPRADĀNA",
+            "APADANA": "FROM_APĀDĀNA",
+            "ADHIKARANA_SPATIAL": "LOCATED_IN",
+            "ADHIKARANA_TEMPORAL": "OCCURS_AT"
+        }
+        return mapping.get(karaka_type, "UNKNOWN")
+    
+    def _print_statistics(self):
+        """Print final ingestion statistics"""
+        print(f"\n{'='*80}")
+        print(f"INGESTION COMPLETE")
+        print(f"{'='*80}")
+        print(f"Total lines processed: {self.stats['total_lines']}")
+        print(f"Successful extractions: {self.stats['successful_extractions']}")
+        print(f"Failed extractions: {self.stats['failed_extractions']}")
+        print(f"Success rate: {self.stats['successful_extractions']/self.stats['total_lines']*100:.1f}%")
+        print(f"\nGraph Statistics:")
+        print(f"  Total Kriyās: {self.stats['total_kriyas']}")
+        print(f"  Total Entities: {len([n for n in self.graph.graph.nodes() if self.graph.graph.nodes[n].get('type') == 'Entity'])}")
+        print(f"  Total Documents: {len(self.graph.documents)}")
+        print(f"  Total Edges: {self.graph.graph.number_of_edges()}")
+        print(f"  FAISS Index Size: {self.graph.vector_store.size()}")
+        
+        # GSV-Retry statistics
+        gsv_stats = self.gsv_engine.get_failure_stats()
+        print(f"\nGSV-Retry Statistics:")
+        print(f"  Total attempts: {gsv_stats['total_attempts']}")
+        print(f"  Total failures: {gsv_stats['total_failures']}")
+        print(f"  Success rate: {gsv_stats['success_rate']*100:.1f}%")
+
+print("✅ IngestionPipeline class defined")
+
+
+# ============================================================================
 # CELL 8: INGESTION STEP 1 - Load & Refine Documents
 # ============================================================================
 def load_and_refine_documents(docs_folder: str = "./test_documents") -> Dict[str, List[str]]:
