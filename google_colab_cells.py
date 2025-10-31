@@ -99,7 +99,7 @@ print("\n" + "="*80)
 print("INITIALIZING GRAPH INFRASTRUCTURE")
 print("="*80)
 
-def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 512) -> str:
+def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 2048, temperature: float = 0.0) -> str:
     """Each call creates a fresh session - no conversation history"""
     messages = [
         {"role": "system", "content": system_prompt},
@@ -114,12 +114,15 @@ def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, ma
     
     model_inputs = tokenizer([text], return_tensors="pt").to(model.device)
     
+    # Use sampling if temperature > 0
+    do_sample = temperature > 0.0
+    
     generated_ids = model.generate(
         **model_inputs,
         max_new_tokens=max_tokens,
         pad_token_id=tokenizer.eos_token_id,
-        do_sample=False,
-        temperature=0.0
+        do_sample=do_sample,
+        temperature=temperature if do_sample else None
     )
     
     output_ids = generated_ids[0][len(model_inputs.input_ids[0]):]
@@ -352,19 +355,21 @@ print("✅ Entity resolver loaded")
 class GSVRetryEngine:
     """Generate-Score-Verify-Retry engine for robust extraction with cross-validation"""
     
-    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 2):
+    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 2, scoring_ensemble_size: int = 3):
         """Initialize GSV-Retry engine
         
         Args:
             model: LLM model for generation
             tokenizer: Tokenizer for the model
             prompts: Dictionary of prompts (extraction, scoring, verification, feedback)
-            max_retries: Maximum retry attempts (default 5)
+            max_retries: Maximum retry attempts (default 2)
+            scoring_ensemble_size: Number of scoring calls per candidate (default 3, set to 1 for speed)
         """
         self.model = model
         self.tokenizer = tokenizer
         self.prompts = prompts
         self.max_retries = max_retries
+        self.scoring_ensemble_size = scoring_ensemble_size
         self.failure_stats = {
             'total_attempts': 0,
             'total_failures': 0,
@@ -495,10 +500,15 @@ class GSVRetryEngine:
                     system_prompt=full_prompt,
                     user_prompt=text,
                     model=self.model,
-                    tokenizer=self.tokenizer
+                    tokenizer=self.tokenizer,
+                    temperature=0.5  # Higher temp for diverse candidates
                 )
                 
+                # DEBUG: Show raw response if parsing fails
                 parsed_data = parse_json_response(response)
+                if not parsed_data and i == 0:
+                    print(f"\n          ⚠️ Raw response: {response[:200]}", end="", flush=True)
+                
                 if parsed_data:
                     # Keep the full structure with extractions array
                     # Normalize to {"extractions": [...]} format
@@ -525,7 +535,7 @@ class GSVRetryEngine:
         return candidates
     
     def _get_robust_score(self, candidate: Dict, scoring_prompt: str) -> float:
-        """Ensemble scoring with 3 calls and validation
+        """Ensemble scoring with configurable calls and validation
         
         Args:
             candidate: Candidate dict to score
@@ -536,14 +546,15 @@ class GSVRetryEngine:
         """
         scores = []
         
-        for attempt in range(3):
+        for attempt in range(self.scoring_ensemble_size):
             print(".", end="", flush=True)
             try:
                 response = call_llm_isolated(
                     system_prompt=scoring_prompt,
                     user_prompt=json.dumps(candidate["data"], indent=2),
                     model=self.model,
-                    tokenizer=self.tokenizer
+                    tokenizer=self.tokenizer,
+                    temperature=0.0  # Deterministic scoring
                 )
                 
                 score_data = parse_json_response(response)
@@ -612,7 +623,8 @@ class GSVRetryEngine:
                 system_prompt=verification_prompt,
                 user_prompt=context_str,
                 model=self.model,
-                tokenizer=self.tokenizer
+                tokenizer=self.tokenizer,
+                temperature=0.0  # Deterministic verification
             )
             
             # DEBUG: Show raw verifier response
@@ -2251,26 +2263,34 @@ class QueryPipeline:
         
         reasoning_trace = []
         
-        # Step 1: Decompose with GSV-Retry
-        print("\n📋 [Step 1/3] Decomposing query with GSV-Retry...")
+        # Step 1: Decompose query (direct call - GSV too slow for queries)
+        print("\n📋 [Step 1/3] Decomposing query...")
+        print(f"   Query text: '{question}'")
         try:
-            golden_plan = self.gsv_engine.extract_with_retry(
-                text=question,
-                extraction_type="query",
-                line_ref="query"
+            response = call_llm_isolated(
+                system_prompt=self.gsv_engine.prompts.get("query_decomposition_prompt"),
+                user_prompt=question,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                temperature=0.5
             )
             
-            if not golden_plan:
-                print("   ❌ Failed to decompose query")
+            parsed_plan = parse_json_response(response)
+            
+            if not parsed_plan:
+                print("   ❌ Failed to parse query plan")
                 return {
                     "question": question,
-                    "answer": "Failed to decompose query after multiple attempts. Please try rephrasing your question.",
+                    "answer": "Failed to decompose query. Please try rephrasing your question.",
                     "citations": [],
                     "reasoning_trace": [],
                     "status": "ERROR"
                 }
             
-            print(f"   ✅ Golden Plan generated")
+            # Wrap in golden_plan format for compatibility
+            golden_plan = {"data": parsed_plan, "raw_response": response}
+            
+            print(f"   ✅ Query plan generated")
             print(f"   📝 Plan: {json.dumps(golden_plan['data'], indent=2)[:200]}...")
         except Exception as e:
             print(f"   ❌ Error during decomposition: {str(e)[:50]}")
@@ -2617,13 +2637,10 @@ print("="*80)
 # Always reload prompts (in case they were updated)
 PROMPTS = load_prompts()
 
-# Initialize graph (only once - preserve existing graph data)
-if 'karaka_graph' not in globals():
-    print("Initializing KarakaGraphV2...")
-    karaka_graph = KarakaGraphV2(embedding_model, embedding_tokenizer)
-    print("✅ Graph initialized")
-else:
-    print("✅ Graph already initialized (preserving existing data)")
+# ALWAYS recreate graph (fresh start on each run)
+print("Initializing fresh KarakaGraphV2...")
+karaka_graph = KarakaGraphV2(embedding_model, embedding_tokenizer)
+print("✅ Graph initialized (clean slate)")
 
 # Always recreate GSV engine (to pick up prompt changes)
 print("Initializing GSVRetryEngine...")
@@ -2631,7 +2648,8 @@ gsv_engine = GSVRetryEngine(
     model=llm_model,
     tokenizer=tokenizer,
     prompts=PROMPTS,
-    max_retries=2
+    max_retries=2,
+    scoring_ensemble_size=1  # Set to 1 for speed, 3 for robustness
 )
 print("✅ GSV-Retry Engine initialized")
 
