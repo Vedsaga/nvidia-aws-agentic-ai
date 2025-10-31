@@ -2,12 +2,12 @@
 # CELL 1: Setup & Dependencies
 # ============================================================================
 print("Installing required libraries...")
-!pip install transformers torch accelerate bitsandbytes sentence-transformers networkx -q
+!pip install transformers torch accelerate networkx faiss-cpu -q
 print("✅ Dependencies installed.")
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
-from sentence_transformers import SentenceTransformer
+import torch.nn.functional as F
+from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
 import json
 import re
 import os
@@ -50,28 +50,45 @@ print("LOADING MODELS")
 print("="*80)
 
 if 'llm_model' not in globals():
-    print("Loading Qwen3-4B-Instruct-2507 (4-bit)...")
-    model_id = "Qwen/Qwen3-4B-Instruct-2507"
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16
-    )
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    llm_model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True
-    )
+    print("Loading Llama-3.1-Nemotron-Nano-8B-v1...")
+    model_id = "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    tokenizer.pad_token_id = tokenizer.eos_token_id
+    
+    # Try bfloat16 first, fallback to float16 if not supported
+    try:
+        llm_model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
+    except Exception as e:
+        print(f"⚠️  bfloat16 not supported, using float16: {e}")
+        llm_model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            dtype=torch.float16,
+            device_map="auto",
+            trust_remote_code=True
+        )
     print("✅ LLM loaded")
 else:
     print("✅ Models already loaded — reusing.")
 
 if 'embedding_model' not in globals():
-    print("Loading sentence-transformers for entity embeddings...")
-    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    print("Loading llama-3.2-nv-embedqa-1b-v2 for embeddings...")
+    embedding_tokenizer = AutoTokenizer.from_pretrained("nvidia/llama-3.2-nv-embedqa-1b-v2")
+    embedding_model = AutoModel.from_pretrained("nvidia/llama-3.2-nv-embedqa-1b-v2", trust_remote_code=True)
+    embedding_model = embedding_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    embedding_model.eval()
     print("✅ Embedding model loaded")
+
+def average_pool(last_hidden_states, attention_mask):
+    """Average pooling with attention mask for NVIDIA embedding model."""
+    last_hidden_states_masked = last_hidden_states.masked_fill(~attention_mask[..., None].bool(), 0.0)
+    embedding = last_hidden_states_masked.sum(dim=1) / attention_mask.sum(dim=1)[..., None]
+    embedding = F.normalize(embedding, dim=-1)
+    return embedding
 
 
 # ============================================================================
@@ -131,11 +148,21 @@ print("✅ Core functions loaded")
 # CELL 4: Entity Resolution
 # ============================================================================
 class EntityResolver:
-    def __init__(self, embedding_model, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
+    def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
         self.model = embedding_model
+        self.tokenizer = embedding_tokenizer
         self.threshold = threshold
         self.entity_registry = {}
         self.entity_map = {}
+    
+    def encode(self, text: str) -> np.ndarray:
+        """Encode text using NVIDIA embedding model."""
+        inputs = self.tokenizer([text], padding=True, truncation=True, return_tensors='pt')
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        embedding = average_pool(outputs.last_hidden_state, inputs["attention_mask"])
+        return embedding.cpu().numpy()[0]
     
     def resolve_entity(self, mention: str) -> str:
         mention = mention.strip()
@@ -145,7 +172,7 @@ class EntityResolver:
         if mention_lower in self.entity_map:
             return self.entity_map[mention_lower]
         
-        mention_embedding = self.model.encode(mention, convert_to_numpy=True)
+        mention_embedding = self.encode(mention)
         best_match = None
         best_score = 0.0
         
@@ -173,9 +200,9 @@ print("✅ Entity resolver loaded")
 # CELL 5: Kāraka Knowledge Graph
 # ============================================================================
 class KarakaGraph:
-    def __init__(self, embedding_model):
+    def __init__(self, embedding_model, embedding_tokenizer):
         self.graph = nx.MultiDiGraph()
-        self.entity_resolver = EntityResolver(embedding_model)
+        self.entity_resolver = EntityResolver(embedding_model, embedding_tokenizer)
         self.documents = {}
         self.kriyas = {}
         self.kriya_index = defaultdict(list)
@@ -468,7 +495,7 @@ def ingest_karakas_to_graph(refined_docs: Dict[str, List[str]], graph: KarakaGra
     print(f"✅ Visualization saved to: {GRAPH_VIZ_FILE}")
 
 # Execute Step 2
-karaka_graph = KarakaGraph(embedding_model)
+karaka_graph = KarakaGraph(embedding_model, embedding_tokenizer)
 karaka_graph.load_from_file(DB_FILE)
 ingest_karakas_to_graph(refined_docs, karaka_graph, llm_model, tokenizer)
 

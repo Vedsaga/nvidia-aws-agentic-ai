@@ -1,12 +1,12 @@
 # Implementation Plan
 
-- [-] 1. Update dependencies and model configuration
+- [x] 1. Update dependencies and model configuration
   - Add faiss-cpu to pip install command in CELL 1
   - Update model_id to "meta-llama/Llama-3.1-Nemotron-Nano-8B-Instruct-v1" in CELL 2
   - Update embedding_model to "nvidia/Llama-3.2-NV-EmbedQA-1B-v2" in CELL 2
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 2. Create prompts.json configuration file
+- [x] 2. Create prompts.json configuration file
   - Create prompts.json with all required prompt keys
   - Use simplified verification prompt (hallucination, omission, role mismatch checks)
   - Enhance extraction prompt to include coreferences field and ADHIKARANA_SPATIAL/TEMPORAL distinction
