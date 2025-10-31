@@ -27,7 +27,7 @@
   - Integrate with KarakaGraphV2
   - _Requirements: 1.5, 4.3_
 
-- [ ] 5. Implement GSVRetryEngine core class
+- [x] 5. Implement GSVRetryEngine core class
   - Create GSVRetryEngine class with max_retries=5
   - Implement extract_with_retry() main loop with fast-path optimization (score ≥95 → immediate verify)
   - Implement _generate_candidates() for 3 isolated LLM calls
@@ -38,7 +38,7 @@
   - Implement _log_failure() with detailed diagnostics
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 5.12, 5.13, 5.14, 5.15, 5.16_
 
-- [ ] 6. Update KarakaGraphV2 with schema enforcement
+- [-] 6. Update KarakaGraphV2 with schema enforcement
   - Add GraphSchema instance to __init__
   - Add FAISSVectorStore instance to __init__
   - Implement add_document_node() with schema validation

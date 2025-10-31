@@ -273,7 +273,298 @@ print("✅ Graph schema loaded")
 
 
 # ============================================================================
-# CELL 6: Entity Resolution
+# CELL 6: GSV-Retry Engine
+# ============================================================================
+class GSVRetryEngine:
+    """Generate-Score-Verify-Retry engine for robust extraction with cross-validation"""
+    
+    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 5):
+        """Initialize GSV-Retry engine
+        
+        Args:
+            model: LLM model for generation
+            tokenizer: Tokenizer for the model
+            prompts: Dictionary of prompts (extraction, scoring, verification, feedback)
+            max_retries: Maximum retry attempts (default 5)
+        """
+        self.model = model
+        self.tokenizer = tokenizer
+        self.prompts = prompts
+        self.max_retries = max_retries
+        self.failure_stats = {
+            'total_attempts': 0,
+            'total_failures': 0,
+            'failure_reasons': defaultdict(int)
+        }
+    
+    def extract_with_retry(self, text: str, extraction_type: str = "kriya", line_ref: str = "") -> Optional[Dict]:
+        """Main GSV-Retry loop with fast-path optimization
+        
+        Args:
+            text: Input text to extract from
+            extraction_type: Type of extraction ("kriya" or "query")
+            line_ref: Reference for logging (e.g., "doc1_L5")
+        
+        Returns:
+            Golden Candidate dict or None if all retries exhausted
+        """
+        self.failure_stats['total_attempts'] += 1
+        feedback_prompt = ""
+        failure_log = []
+        
+        # Select prompts based on extraction type
+        if extraction_type == "kriya":
+            base_prompt = self.prompts.get("kriya_extraction_prompt", "")
+            feedback_template = self.prompts.get("kriya_extraction_feedback_prompt", "")
+            scoring_prompt = self.prompts.get("kriya_scoring_prompt", "")
+            verification_prompt = self.prompts.get("kriya_verification_prompt", "")
+        else:  # query
+            base_prompt = self.prompts.get("query_decomposition_prompt", "")
+            feedback_template = self.prompts.get("query_decomposition_prompt", "")  # Reuse for now
+            scoring_prompt = self.prompts.get("query_scoring_prompt", "")
+            verification_prompt = self.prompts.get("query_verification_prompt", "")
+        
+        for attempt in range(self.max_retries):
+            # GENERATE: 3 candidates (isolated LLM calls)
+            candidates = self._generate_candidates(text, base_prompt, feedback_prompt)
+            
+            if not candidates:
+                feedback_prompt = "Previous attempt produced no valid candidates. Please ensure JSON output is valid."
+                failure_log.append({
+                    "attempt": attempt + 1,
+                    "error": "No valid candidates generated",
+                    "feedback": feedback_prompt
+                })
+                continue
+            
+            # FAST-PATH: Score only first candidate initially
+            first_score = self._get_robust_score(candidates[0], scoring_prompt)
+            
+            if first_score >= 95:
+                # High confidence - verify immediately (fast path: 4 LLM calls total)
+                verifier_choice = self._get_blind_verification([candidates[0]], verification_prompt)
+                if verifier_choice == candidates[0]["id"]:
+                    return candidates[0]  # Fast-path success
+            
+            # FULL-PATH: Score all candidates
+            scores = [first_score] + [self._get_robust_score(c, scoring_prompt) for c in candidates[1:]]
+            
+            # VERIFY: Blind verification
+            verifier_choice = self._get_blind_verification(candidates, verification_prompt)
+            
+            # CROSS-VALIDATE
+            highest_idx = scores.index(max(scores))
+            if candidates[highest_idx]["id"] == verifier_choice:
+                return candidates[highest_idx]  # Golden Candidate found
+            
+            # FEEDBACK for retry
+            feedback_prompt = self._generate_feedback(
+                candidates, scores, verifier_choice, feedback_template
+            )
+            failure_log.append({
+                "attempt": attempt + 1,
+                "candidates": [c["id"] for c in candidates],
+                "scores": scores,
+                "verifier_choice": verifier_choice,
+                "feedback": feedback_prompt
+            })
+        
+        # Failed after max_retries
+        self._log_failure(text, failure_log, line_ref, extraction_type)
+        self.failure_stats['total_failures'] += 1
+        self.failure_stats['failure_reasons']['max_retries_exhausted'] += 1
+        return None
+    
+    def _generate_candidates(self, text: str, base_prompt: str, feedback: str) -> List[Dict]:
+        """Generate 3 candidates via isolated LLM calls
+        
+        Args:
+            text: Input text
+            base_prompt: Base extraction prompt
+            feedback: Feedback from previous iteration
+        
+        Returns:
+            List of candidate dicts with id, data, raw_response
+        """
+        candidates = []
+        full_prompt = base_prompt + ("\n\n" + feedback if feedback else "")
+        
+        for i in range(3):
+            try:
+                response = call_llm_isolated(
+                    system_prompt=full_prompt,
+                    user_prompt=text,
+                    model=self.model,
+                    tokenizer=self.tokenizer,
+                    max_tokens=400
+                )
+                
+                parsed_data = parse_json_response(response)
+                if parsed_data:
+                    candidates.append({
+                        "id": f"Candidate_{chr(65+i)}",  # A, B, C
+                        "data": parsed_data,
+                        "raw_response": response
+                    })
+            except Exception as e:
+                print(f"      ⚠️ Candidate {chr(65+i)} generation failed: {e}")
+                continue
+        
+        return candidates
+    
+    def _get_robust_score(self, candidate: Dict, scoring_prompt: str) -> float:
+        """Ensemble scoring with 3 calls and validation
+        
+        Args:
+            candidate: Candidate dict to score
+            scoring_prompt: Scoring prompt template
+        
+        Returns:
+            Average score (1-100)
+        """
+        scores = []
+        
+        for attempt in range(3):
+            try:
+                response = call_llm_isolated(
+                    system_prompt=scoring_prompt,
+                    user_prompt=json.dumps(candidate["data"], indent=2),
+                    model=self.model,
+                    tokenizer=self.tokenizer,
+                    max_tokens=200
+                )
+                
+                score_data = parse_json_response(response)
+                if score_data and isinstance(score_data, dict):
+                    score = self._validate_score(score_data.get("score"))
+                    if score is not None:
+                        scores.append(score)
+            except Exception as e:
+                print(f"      ⚠️ Scoring attempt {attempt+1} failed: {e}")
+                continue
+        
+        # Return average or default low score if all failed
+        return sum(scores) / len(scores) if scores else 1.0
+    
+    def _validate_score(self, score) -> Optional[int]:
+        """Validate score is integer 1-100
+        
+        Args:
+            score: Score value to validate
+        
+        Returns:
+            Valid score or None
+        """
+        try:
+            score_int = int(score)
+            if 1 <= score_int <= 100:
+                return score_int
+        except (TypeError, ValueError):
+            pass
+        return None
+    
+    def _get_blind_verification(self, candidates: List[Dict], verification_prompt: str) -> str:
+        """Single blind verification call
+        
+        Args:
+            candidates: List of candidates to verify
+            verification_prompt: Verification prompt
+        
+        Returns:
+            Candidate ID (e.g., "Candidate_A") or "ALL_INVALID"
+        """
+        try:
+            # Build context with only candidate data (no scores)
+            context = json.dumps([
+                {"id": c["id"], "data": c["data"]} 
+                for c in candidates
+            ], indent=2)
+            
+            response = call_llm_isolated(
+                system_prompt=verification_prompt,
+                user_prompt=context,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                max_tokens=300
+            )
+            
+            result = parse_json_response(response)
+            if result and isinstance(result, dict):
+                choice = result.get("choice", "ALL_INVALID")
+                return choice
+        except Exception as e:
+            print(f"      ⚠️ Verification failed: {e}")
+        
+        return "ALL_INVALID"
+    
+    def _generate_feedback(self, candidates: List[Dict], scores: List[float], 
+                          verifier_choice: str, feedback_template: str) -> str:
+        """Generate feedback for next retry iteration
+        
+        Args:
+            candidates: List of candidates
+            scores: List of scores
+            verifier_choice: Verifier's choice
+            feedback_template: Feedback prompt template
+        
+        Returns:
+            Feedback string for next iteration
+        """
+        if verifier_choice == "ALL_INVALID":
+            feedback = "Retry: All previous candidates were invalid. The verifier found issues with all extractions. Please generate new, valid options with correct structure and semantic roles."
+        else:
+            highest_idx = scores.index(max(scores))
+            highest_candidate = candidates[highest_idx]["id"]
+            feedback = f"Retry: The quantitative score favored {highest_candidate} (score: {scores[highest_idx]:.1f}), but the qualitative verifier chose {verifier_choice}. Please re-evaluate and ensure both semantic correctness and structural validity."
+        
+        # Use template if available
+        if feedback_template and "{feedback}" in feedback_template:
+            return feedback_template.format(feedback=feedback)
+        
+        return feedback
+    
+    def _log_failure(self, text: str, failure_log: List[Dict], line_ref: str, extraction_type: str):
+        """Log detailed failure diagnostics
+        
+        Args:
+            text: Original input text
+            failure_log: List of failure attempt details
+            line_ref: Line reference for context
+            extraction_type: Type of extraction
+        """
+        print(f"\n      ❌ GSV-Retry FAILED after {self.max_retries} attempts at {line_ref}")
+        print(f"      Text: \"{text[:100]}...\"" if len(text) > 100 else f"      Text: \"{text}\"")
+        print(f"      Type: {extraction_type}")
+        print(f"      Failure log:")
+        
+        for entry in failure_log:
+            print(f"        Attempt {entry['attempt']}:")
+            if 'error' in entry:
+                print(f"          Error: {entry['error']}")
+            else:
+                print(f"          Candidates: {entry.get('candidates', [])}")
+                print(f"          Scores: {[f'{s:.1f}' for s in entry.get('scores', [])]}")
+                print(f"          Verifier: {entry.get('verifier_choice', 'N/A')}")
+            print(f"          Feedback: {entry.get('feedback', 'N/A')[:100]}...")
+    
+    def get_failure_stats(self) -> Dict:
+        """Get failure statistics
+        
+        Returns:
+            Dict with failure stats
+        """
+        return {
+            'total_attempts': self.failure_stats['total_attempts'],
+            'total_failures': self.failure_stats['total_failures'],
+            'success_rate': (self.failure_stats['total_attempts'] - self.failure_stats['total_failures']) / self.failure_stats['total_attempts'] if self.failure_stats['total_attempts'] > 0 else 0,
+            'failure_reasons': dict(self.failure_stats['failure_reasons'])
+        }
+
+print("✅ GSVRetryEngine class defined")
+
+
+# ============================================================================
+# CELL 7: Entity Resolution
 # ============================================================================
 class EntityResolver:
     def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
