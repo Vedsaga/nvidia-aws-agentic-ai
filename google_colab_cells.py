@@ -99,7 +99,7 @@ print("\n" + "="*80)
 print("INITIALIZING GRAPH INFRASTRUCTURE")
 print("="*80)
 
-def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 300) -> str:
+def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 512) -> str:
     """Each call creates a fresh session - no conversation history"""
     messages = [
         {"role": "system", "content": system_prompt},
@@ -352,7 +352,7 @@ print("✅ Entity resolver loaded")
 class GSVRetryEngine:
     """Generate-Score-Verify-Retry engine for robust extraction with cross-validation"""
     
-    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 5):
+    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 2):
         """Initialize GSV-Retry engine
         
         Args:
@@ -399,10 +399,18 @@ class GSVRetryEngine:
             verification_prompt = self.prompts.get("query_verification_prompt", "")
         
         for attempt in range(self.max_retries):
+            print(f"        🔄 Attempt {attempt + 1}/{self.max_retries}...", end=" ", flush=True)
+            
             # GENERATE: 3 candidates (isolated LLM calls)
+            print("Gen", end="", flush=True)
             candidates = self._generate_candidates(text, base_prompt, feedback_prompt)
             
+            # DEBUG: Show first candidate on first attempt
+            if attempt == 0 and candidates and len(candidates) > 0:
+                print(f"\n          📋 Sample candidate: {json.dumps(candidates[0]['data'], ensure_ascii=False)[:150]}...", end="", flush=True)
+            
             if not candidates:
+                print(" ❌ No candidates")
                 feedback_prompt = "Previous attempt produced no valid candidates. Please ensure JSON output is valid."
                 failure_log.append({
                     "attempt": attempt + 1,
@@ -411,25 +419,39 @@ class GSVRetryEngine:
                 })
                 continue
             
+            print(f"({len(candidates)})", end=" ", flush=True)
+            
             # FAST-PATH: Score only first candidate initially
+            print("Score", end="", flush=True)
             first_score = self._get_robust_score(candidates[0], scoring_prompt)
+            print(f"({first_score:.0f})", end=" ", flush=True)
             
             if first_score >= 95:
                 # High confidence - verify immediately (fast path: 4 LLM calls total)
-                verifier_choice = self._get_blind_verification([candidates[0]], verification_prompt)
+                print("FastVerify", end="", flush=True)
+                verifier_choice = self._get_blind_verification([candidates[0]], verification_prompt, text)
                 if verifier_choice == candidates[0]["id"]:
+                    print(" ✅ Fast-path success!")
                     return candidates[0]  # Fast-path success
+                print(f"({verifier_choice})", end=" ", flush=True)
             
             # FULL-PATH: Score all candidates
             scores = [first_score] + [self._get_robust_score(c, scoring_prompt) for c in candidates[1:]]
+            print(f"AllScores{scores}", end=" ", flush=True)
             
             # VERIFY: Blind verification
-            verifier_choice = self._get_blind_verification(candidates, verification_prompt)
+            print("Verify", end="", flush=True)
+            verifier_choice = self._get_blind_verification(candidates, verification_prompt, text)
+            print(f"({verifier_choice})", end=" ", flush=True)
             
             # CROSS-VALIDATE
             highest_idx = scores.index(max(scores))
-            if candidates[highest_idx]["id"] == verifier_choice:
+            highest_id = candidates[highest_idx]["id"]
+            if highest_id == verifier_choice:
+                print(f"✅ Match! {highest_id}")
                 return candidates[highest_idx]  # Golden Candidate found
+            
+            print(f"❌ Mismatch: Score→{highest_id} vs Verify→{verifier_choice}")
             
             # FEEDBACK for retry
             feedback_prompt = self._generate_feedback(
@@ -464,13 +486,13 @@ class GSVRetryEngine:
         full_prompt = base_prompt + ("\n\n" + feedback if feedback else "")
         
         for i in range(3):
+            print(".", end="", flush=True)
             try:
                 response = call_llm_isolated(
                     system_prompt=full_prompt,
                     user_prompt=text,
                     model=self.model,
-                    tokenizer=self.tokenizer,
-                    max_tokens=400
+                    tokenizer=self.tokenizer
                 )
                 
                 parsed_data = parse_json_response(response)
@@ -512,13 +534,13 @@ class GSVRetryEngine:
         scores = []
         
         for attempt in range(3):
+            print(".", end="", flush=True)
             try:
                 response = call_llm_isolated(
                     system_prompt=scoring_prompt,
                     user_prompt=json.dumps(candidate["data"], indent=2),
                     model=self.model,
-                    tokenizer=self.tokenizer,
-                    max_tokens=200
+                    tokenizer=self.tokenizer
                 )
                 
                 score_data = parse_json_response(response)
@@ -527,7 +549,7 @@ class GSVRetryEngine:
                     if score is not None:
                         scores.append(score)
             except Exception as e:
-                print(f"      ⚠️ Scoring attempt {attempt+1} failed: {e}")
+                print(f"\n      ⚠️ Scoring attempt {attempt+1} failed: {e}")
                 continue
         
         # Return average or default low score if all failed
@@ -550,37 +572,58 @@ class GSVRetryEngine:
             pass
         return None
     
-    def _get_blind_verification(self, candidates: List[Dict], verification_prompt: str) -> str:
+    def _get_blind_verification(self, candidates: List[Dict], verification_prompt: str, original_text: str) -> str:
         """Single blind verification call
         
         Args:
             candidates: List of candidates to verify
             verification_prompt: Verification prompt
+            original_text: Original input text for hallucination checking
         
         Returns:
             Candidate ID (e.g., "Candidate_A") or "ALL_INVALID"
         """
         try:
-            # Build context with only candidate data (no scores)
-            context = json.dumps([
-                {"id": c["id"], "data": c["data"]} 
-                for c in candidates
-            ], indent=2)
+            # Build context with original text and candidates
+            # Extract the first extraction from each candidate's data
+            context = {
+                "original_text": original_text,
+                "candidates": [
+                    {
+                        "id": c["id"], 
+                        "extraction": c["data"]["extractions"][0] if isinstance(c["data"], dict) and "extractions" in c["data"] and len(c["data"]["extractions"]) > 0 else c["data"]
+                    } 
+                    for c in candidates
+                ]
+            }
+            
+            context_str = json.dumps(context, indent=2)
+            
+            # DEBUG: Show what we're sending to verifier (first time only)
+            if not hasattr(self, '_debug_shown'):
+                print(f"\n          📤 Verifier input: {context_str[:400]}")
+                self._debug_shown = True
             
             response = call_llm_isolated(
                 system_prompt=verification_prompt,
-                user_prompt=context,
+                user_prompt=context_str,
                 model=self.model,
-                tokenizer=self.tokenizer,
-                max_tokens=300
+                tokenizer=self.tokenizer
             )
+            
+            # DEBUG: Show raw verifier response
+            print(f"\n          🔍 Verifier raw: {response[:200]}...", end="", flush=True)
             
             result = parse_json_response(response)
             if result and isinstance(result, dict):
                 choice = result.get("choice", "ALL_INVALID")
+                reasoning = result.get("reasoning", "No reasoning")
+                print(f"\n          🔍 Parsed choice: {choice}, reason: {reasoning[:80]}...", end="", flush=True)
                 return choice
+            else:
+                print(f"\n          ⚠️ Verifier returned invalid JSON: {result}", end="", flush=True)
         except Exception as e:
-            print(f"      ⚠️ Verification failed: {e}")
+            print(f"\n      ⚠️ Verification failed: {e}")
         
         return "ALL_INVALID"
     
@@ -1175,7 +1218,7 @@ class IngestionPipeline:
     
 
     
-    def _split_with_retry(self, text: str, max_retries: int = 3) -> List[str]:
+    def _split_with_retry(self, text: str, max_retries: int = 2) -> List[str]:
         """Step 3 & 4: Ask LLM to split, verify no hallucination, retry if needed"""
         system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
         
@@ -2567,39 +2610,36 @@ print("\n" + "="*80)
 print("CELL 10: INGESTION STEP 1 - EMBED AND STORE")
 print("="*80)
 
-# Initialize graph
+# Always reload prompts (in case they were updated)
+PROMPTS = load_prompts()
+
+# Initialize graph (only once - preserve existing graph data)
 if 'karaka_graph' not in globals():
     print("Initializing KarakaGraphV2...")
     karaka_graph = KarakaGraphV2(embedding_model, embedding_tokenizer)
     print("✅ Graph initialized")
 else:
-    print("✅ Graph already initialized")
+    print("✅ Graph already initialized (preserving existing data)")
 
-# Initialize GSV-Retry Engine
-if 'gsv_engine' not in globals():
-    print("Initializing GSVRetryEngine...")
-    gsv_engine = GSVRetryEngine(
-        model=llm_model,
-        tokenizer=tokenizer,
-        prompts=PROMPTS,
-        max_retries=5
-    )
-    print("✅ GSV-Retry Engine initialized")
-else:
-    print("✅ GSV-Retry Engine already initialized")
+# Always recreate GSV engine (to pick up prompt changes)
+print("Initializing GSVRetryEngine...")
+gsv_engine = GSVRetryEngine(
+    model=llm_model,
+    tokenizer=tokenizer,
+    prompts=PROMPTS,
+    max_retries=2
+)
+print("✅ GSV-Retry Engine initialized")
 
-# Initialize Ingestion Pipeline
-if 'ingestion_pipeline' not in globals():
-    print("Initializing IngestionPipeline...")
-    ingestion_pipeline = IngestionPipeline(
-        graph=karaka_graph,
-        gsv_engine=gsv_engine,
-        embedding_model=embedding_model,
-        embedding_tokenizer=embedding_tokenizer
-    )
-    print("✅ Ingestion Pipeline initialized")
-else:
-    print("✅ Ingestion Pipeline already initialized")
+# Always recreate ingestion pipeline (to use new GSV engine)
+print("Initializing IngestionPipeline...")
+ingestion_pipeline = IngestionPipeline(
+    graph=karaka_graph,
+    gsv_engine=gsv_engine,
+    embedding_model=embedding_model,
+    embedding_tokenizer=embedding_tokenizer
+)
+print("✅ Ingestion Pipeline initialized")
 
 # Load and embed documents (Step 1 only)
 print("\n" + "="*80)
