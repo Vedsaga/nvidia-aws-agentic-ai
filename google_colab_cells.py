@@ -1115,46 +1115,63 @@ class IngestionPipeline:
     # ========================================================================
 
     def _llm_sentence_split(self, text: str) -> List[str]:
-        """Smart chunking LLM sentence splitting with retry on hallucination"""
-        print(f"      🤖 Starting smart-chunk LLM sentence split...")
+        """Direct LLM sentence splitting with smart chunking for long texts"""
+        print(f"      🤖 Starting LLM sentence split...")
         
+        MAX_CHARS = 1500  # ~400 tokens, safe for LLM
+        
+        # If text is short enough, process directly
+        if len(text) <= MAX_CHARS:
+            print(f"      📊 Text fits in one pass ({len(text)} chars)")
+            return self._split_with_retry(text)
+        
+        # For longer text, use sliding window with LLM-guided chunking
+        print(f"      📊 Text too long ({len(text)} chars), using sliding window...")
+        return self._sliding_window_split(text, MAX_CHARS)
+    
+    def _sliding_window_split(self, text: str, window_size: int) -> List[str]:
+        """Split long text using sliding window approach"""
         all_sentences = []
-        MAX_CHARS = 800  # ~200 tokens, safe for LLM processing
+        start = 0
         
-        # Step 1: Smart chunking - split text into processable chunks
-        chunks = self._smart_chunk_text(text, MAX_CHARS)
-        print(f"      📊 Created {len(chunks)} chunks to process")
-        
-        # Step 2: Process each chunk with LLM
-        for chunk_num, chunk in enumerate(chunks, 1):
-            sentences = self._split_with_retry(chunk)
-            all_sentences.extend(sentences)
-            print(f"      ✓ Chunk {chunk_num}/{len(chunks)}: {len(sentences)} sentences")
+        while start < len(text):
+            # Extract window
+            end = min(start + window_size, len(text))
+            window = text[start:end]
+            
+            # If not at the end, try to break at a sentence boundary
+            if end < len(text):
+                # Find all potential sentence boundaries (. ! ?)
+                boundaries = []
+                for i in range(len(window) - 1, int(window_size * 0.5), -1):
+                    if window[i] in '.!?' and i + 1 < len(window) and window[i + 1] == ' ':
+                        # Check it's not an abbreviation (not preceded by single capital letter)
+                        if i >= 3:
+                            # Look back to see if it's "Dr." "Mr." etc
+                            prev_word = window[max(0, i-10):i].split()[-1] if window[max(0, i-10):i].split() else ""
+                            if prev_word not in ['Dr', 'Mr', 'Ms', 'Mrs', 'Prof', 'Inc', 'Ltd', 'Co', 'St']:
+                                boundaries.append(i + 1)
+                                break
+                
+                if boundaries:
+                    end = start + boundaries[0]
+                    window = text[start:end]
+            
+            # Process this window with LLM
+            sentences = self._split_with_retry(window)
+            
+            # Add sentences, avoiding duplicates from overlap
+            for sent in sentences:
+                if not all_sentences or sent != all_sentences[-1]:
+                    all_sentences.append(sent)
+            
+            # Move start position
+            start = end
+            
+            print(f"      ✓ Processed {end}/{len(text)} chars: {len(sentences)} sentences")
         
         print(f"      ✅ Split complete: {len(all_sentences)} total sentences")
         return all_sentences
-    
-    def _smart_chunk_text(self, text: str, max_chars: int) -> List[str]:
-        """Smart chunking that respects sentence boundaries"""
-        # First, do a rough split on likely sentence boundaries
-        rough_splits = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
-        
-        chunks = []
-        current_chunk = ""
-        
-        for fragment in rough_splits:
-            # If adding this fragment exceeds limit, save current chunk
-            if current_chunk and len(current_chunk) + len(fragment) + 1 > max_chars:
-                chunks.append(current_chunk.strip())
-                current_chunk = fragment
-            else:
-                current_chunk = current_chunk + " " + fragment if current_chunk else fragment
-        
-        # Add remaining chunk
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        return chunks
     
 
     
@@ -1181,12 +1198,21 @@ class IngestionPipeline:
                     proposed_sentences = [str(s).strip() for s in result if str(s).strip()]
                     
                     # Step 4a: Align LLM output to match original punctuation
-                    aligned_sentences = self._align_punctuation(text, proposed_sentences)
+                    try:
+                        aligned_sentences = self._align_punctuation(text, proposed_sentences)
+                    except Exception as align_error:
+                        print(f"      ⚠️ Attempt {attempt+1}: Alignment failed ({align_error}), retrying...")
+                        continue
                     
                     # Step 4b: Verify no hallucination (strict check)
                     if self._verify_fidelity(text, aligned_sentences):
                         return aligned_sentences
                     else:
+                        # Debug: show what's different
+                        if attempt == max_retries - 1:  # Last attempt
+                            orig_norm = re.sub(r'\s+', '', text).lower()
+                            prop_norm = re.sub(r'\s+', '', "".join(aligned_sentences)).lower()
+                            print(f"      ⚠️ Fidelity mismatch: orig={len(orig_norm)} vs prop={len(prop_norm)}")
                         print(f"      ⚠️ Attempt {attempt+1}: Hallucination detected, retrying...")
                         continue
                 else:
@@ -1203,46 +1229,60 @@ class IngestionPipeline:
     
     def _align_punctuation(self, original: str, sentences: List[str]) -> List[str]:
         """Align LLM output punctuation to match original text"""
-        joined = "".join(sentences)
+        # Simpler approach: normalize both, find differences, restore original punctuation
+        joined_llm = "".join(sentences)
         
-        # Build character mapping from original to LLM output
-        # This handles quote normalization: " → ' or vice versa
-        aligned = []
-        orig_idx = 0
+        # Create normalized versions (no whitespace, lowercase)
+        orig_chars = [c for c in original if not c.isspace()]
+        llm_chars = [c for c in joined_llm if not c.isspace()]
         
-        for sentence in sentences:
-            aligned_sentence = ""
-            for char in sentence:
-                # Skip whitespace in alignment
-                while orig_idx < len(original) and original[orig_idx].isspace():
-                    orig_idx += 1
-                
-                if orig_idx >= len(original):
-                    aligned_sentence += char
-                    continue
-                
-                orig_char = original[orig_idx]
-                
-                # If characters match (case-insensitive), use original
-                if char.lower() == orig_char.lower():
-                    aligned_sentence += orig_char
-                    orig_idx += 1
-                # If both are quotes (any type), use original quote style
-                elif char in "\"''"'" and orig_char in "\"''"'":
-                    aligned_sentence += orig_char
-                    orig_idx += 1
-                # If both are dashes, use original dash style
-                elif char in "-–—" and orig_char in "-–—":
-                    aligned_sentence += orig_char
-                    orig_idx += 1
-                else:
-                    # Character mismatch - keep LLM's version
-                    aligned_sentence += char
-                    orig_idx += 1
-            
-            aligned.append(aligned_sentence)
+        if len(orig_chars) != len(llm_chars):
+            # Length mismatch - can't align
+            return sentences
         
-        return aligned
+        # Build mapping: for each position, if it's a quote/dash mismatch, use original
+        aligned_chars = []
+        for orig_c, llm_c in zip(orig_chars, llm_chars):
+            # If both are quotes (any style), use original
+            if orig_c in '"\'""''' and llm_c in '"\'""''':
+                aligned_chars.append(orig_c)
+            # If both are dashes (any style), use original
+            elif orig_c in '-–—' and llm_c in '-–—':
+                aligned_chars.append(orig_c)
+            # If same character (case-insensitive), use original case
+            elif orig_c.lower() == llm_c.lower():
+                aligned_chars.append(orig_c)
+            else:
+                # Different characters - use LLM's version
+                aligned_chars.append(llm_c)
+        
+        # Now rebuild sentences with aligned characters and original whitespace
+        aligned_text = ""
+        char_idx = 0
+        for orig_c in original:
+            if orig_c.isspace():
+                aligned_text += orig_c
+            else:
+                if char_idx < len(aligned_chars):
+                    aligned_text += aligned_chars[char_idx]
+                    char_idx += 1
+        
+        # Split aligned text back into sentences (same boundaries as LLM output)
+        result = []
+        text_idx = 0
+        for sent in sentences:
+            sent_len = len([c for c in sent if not c.isspace()])
+            # Extract corresponding portion from aligned text
+            extracted = ""
+            char_count = 0
+            while char_count < sent_len and text_idx < len(aligned_text):
+                if not aligned_text[text_idx].isspace():
+                    char_count += 1
+                extracted += aligned_text[text_idx]
+                text_idx += 1
+            result.append(extracted.strip())
+        
+        return result
     
     def _verify_fidelity(self, original_text: str, proposed_sentences: List[str]) -> bool:
         """Verify LLM didn't hallucinate by comparing normalized text (strict check)"""
