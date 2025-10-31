@@ -58,7 +58,7 @@
   - Ensure ALL edges flow FROM Kriyā TO Entity (HAS_KARTĀ not IS_KARTĀ_OF)
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
 
-- [ ] 8. Implement post-processing methods in IngestionPipeline
+- [x] 8. Implement post-processing methods in IngestionPipeline
   - Implement _resolve_coreferences() with expanded pronoun list and extraction-time hints
   - Use in_edges() to traverse FROM Entity (pronoun) via HAS_KARTĀ relation
   - Implement _link_metaphorical_entities() using GSV-Retry

@@ -986,11 +986,12 @@ class IngestionPipeline:
             'total_edges': 0
         }
     
-    def ingest_documents(self, docs_folder: str = "./test_documents"):
+    def ingest_documents(self, docs_folder: str = "./test_documents", run_postprocessing: bool = True):
         """Main ingestion orchestrator
         
         Args:
             docs_folder: Path to folder containing documents
+            run_postprocessing: Whether to run post-processing steps (default True)
         """
         print(f"\n{'='*80}")
         print(f"INGESTION PIPELINE")
@@ -1008,6 +1009,10 @@ class IngestionPipeline:
         # Step 2: Extract Kriyās with GSV-Retry
         print(f"\n🔍 Step 2: Extracting Kriyās with GSV-Retry...")
         self._extract_kriyas(refined_docs)
+        
+        # Step 3: Post-processing (optional)
+        if run_postprocessing:
+            self.run_post_processing()
         
         # Print final statistics
         self._print_statistics()
@@ -1238,6 +1243,547 @@ class IngestionPipeline:
         print(f"  Total attempts: {gsv_stats['total_attempts']}")
         print(f"  Total failures: {gsv_stats['total_failures']}")
         print(f"  Success rate: {gsv_stats['success_rate']*100:.1f}%")
+    
+    # ========================================================================
+    # POST-PROCESSING METHODS
+    # ========================================================================
+    
+    def run_post_processing(self):
+        """Run all post-processing steps"""
+        print(f"\n{'='*80}")
+        print(f"POST-PROCESSING")
+        print(f"{'='*80}")
+        
+        print(f"\n🔗 Step 1: Resolving coreferences...")
+        self._resolve_coreferences()
+        
+        print(f"\n🔗 Step 2: Linking metaphorical entities...")
+        self._link_metaphorical_entities()
+        
+        print(f"\n🏷️  Step 3: Enriching entity types...")
+        self._enrich_entity_types()
+        
+        print(f"\n⚡ Step 4: Detecting causal relationships...")
+        self._detect_causal_relationships()
+        
+        print(f"\n✅ Post-processing complete")
+    
+    def _resolve_coreferences(self):
+        """Link pronouns to entities using RAG and extraction-time hints"""
+        # Expanded pronoun list
+        pronouns = ["he", "she", "it", "they", "him", "her", "his", "hers", "its", "their", 
+                   "theirs", "which", "that", "who", "whom", "this", "these", "those"]
+        
+        # Find all pronoun entities
+        pronoun_nodes = [
+            n for n in self.graph.graph.nodes() 
+            if self.graph.graph.nodes[n].get("type") == "Entity" 
+            and self.graph.graph.nodes[n].get("canonical_name", "").lower() in pronouns
+        ]
+        
+        print(f"   Found {len(pronoun_nodes)} pronoun entities")
+        resolved_count = 0
+        
+        for pronoun_id in pronoun_nodes:
+            pronoun_name = self.graph.graph.nodes[pronoun_id].get("canonical_name", "")
+            
+            # Check if extraction provided coreference hint
+            coref_hint = self.graph.graph.nodes[pronoun_id].get("coref_hint")
+            coref_context = self.graph.graph.nodes[pronoun_id].get("coref_context", "")
+            
+            # Get context via incoming edges (traverse FROM Entity via HAS_KARTĀ, HAS_KARMA, etc.)
+            kriya_nodes = [
+                e[0] for e in self.graph.graph.in_edges(pronoun_id, data=True) 
+                if e[2].get("relation") in ["HAS_KARTĀ", "HAS_KARMA", "USES_KARANA", 
+                                            "TARGETS_SAMPRADĀNA", "FROM_APĀDĀNA"]
+            ]
+            
+            if not kriya_nodes:
+                continue
+            
+            # Get document nodes via CITED_IN edges
+            doc_nodes = []
+            for k in kriya_nodes:
+                doc_edges = [
+                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                    if e[2].get("relation") == "CITED_IN"
+                ]
+                doc_nodes.extend(doc_edges)
+            
+            if not doc_nodes:
+                continue
+            
+            # Query FAISS for nearby context (5 nearest neighbors)
+            context_docs = []
+            for doc_node in doc_nodes[:1]:  # Use first doc as anchor
+                nearby = self.graph.vector_store.query_nearby(doc_node, k=5)
+                context_docs.extend(nearby)
+            
+            if not context_docs:
+                continue
+            
+            # Build context from nearby documents
+            context_texts = []
+            for doc_id in context_docs[:5]:
+                if doc_id in self.graph.graph:
+                    text = self.graph.graph.nodes[doc_id].get("text", "")
+                    if text:
+                        context_texts.append(text)
+            
+            # Use verifier LLM to confirm coreference link
+            target_entity = self._verify_coreference(
+                pronoun_name, 
+                context_texts, 
+                coref_hint, 
+                coref_context
+            )
+            
+            if target_entity:
+                # Resolve target entity to canonical form
+                canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
+                
+                # Check if target entity exists in graph
+                if canonical_target in self.graph.graph:
+                    # Add IS_SAME_AS edge
+                    self.graph.add_edge(pronoun_id, canonical_target, "IS_SAME_AS")
+                    resolved_count += 1
+                    print(f"      ✓ Resolved '{pronoun_name}' → '{canonical_target}'")
+        
+        print(f"   ✅ Resolved {resolved_count} coreferences")
+    
+    def _verify_coreference(self, pronoun: str, context_texts: List[str], 
+                           hint: Optional[str], hint_context: str) -> Optional[str]:
+        """Use LLM to verify coreference link
+        
+        Args:
+            pronoun: Pronoun to resolve
+            context_texts: Surrounding context texts
+            hint: Extraction-time hint (likely referent)
+            hint_context: Context from extraction
+        
+        Returns:
+            Target entity name or None
+        """
+        if not context_texts:
+            return hint  # Fallback to hint if no context
+        
+        system_prompt = """You are a coreference resolution expert. Given a pronoun and surrounding context, identify what entity the pronoun refers to.
+
+Return JSON with this structure:
+{
+  "referent": "<entity name or null if unclear>",
+  "confidence": "<high|medium|low>",
+  "reasoning": "<brief explanation>"
+}
+
+Only return a referent if you are confident. Return null if unclear."""
+        
+        context_str = "\n".join([f"- {text}" for text in context_texts[:5]])
+        hint_str = f"\nExtraction hint: '{pronoun}' likely refers to '{hint}' ({hint_context})" if hint else ""
+        
+        user_prompt = f"""Pronoun: "{pronoun}"
+
+Context:
+{context_str}{hint_str}
+
+What entity does this pronoun refer to?"""
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=150
+            )
+            
+            result = parse_json_response(response)
+            if result and isinstance(result, dict):
+                referent = result.get("referent")
+                confidence = result.get("confidence", "low")
+                
+                # Only accept high or medium confidence
+                if referent and confidence in ["high", "medium"]:
+                    return referent
+        except Exception as e:
+            print(f"      ⚠️ Coreference verification failed: {e}")
+        
+        return None
+    
+    def _link_metaphorical_entities(self):
+        """Link metaphorical references using GSV-Retry"""
+        # Patterns that suggest metaphorical references
+        metaphor_patterns = [
+            r"king of \w+",
+            r"lord of \w+",
+            r"master of \w+",
+            r"father of \w+",
+            r"mother of \w+",
+            r"son of \w+",
+            r"daughter of \w+",
+            r"\w+ the \w+",  # e.g., "Rama the brave"
+        ]
+        
+        # Find entities matching metaphorical patterns
+        metaphor_entities = []
+        for node_id in self.graph.graph.nodes():
+            if self.graph.graph.nodes[node_id].get("type") != "Entity":
+                continue
+            
+            canonical_name = self.graph.graph.nodes[node_id].get("canonical_name", "")
+            canonical_lower = canonical_name.lower()
+            
+            for pattern in metaphor_patterns:
+                if re.search(pattern, canonical_lower):
+                    metaphor_entities.append(node_id)
+                    break
+        
+        print(f"   Found {len(metaphor_entities)} potential metaphorical entities")
+        linked_count = 0
+        
+        for metaphor_id in metaphor_entities:
+            metaphor_name = self.graph.graph.nodes[metaphor_id].get("canonical_name", "")
+            
+            # Get context via edges
+            kriya_nodes = [
+                e[0] for e in self.graph.graph.in_edges(metaphor_id, data=True)
+            ]
+            
+            if not kriya_nodes:
+                continue
+            
+            # Get document context
+            doc_nodes = []
+            for k in kriya_nodes[:3]:  # Limit to 3 kriyas
+                doc_edges = [
+                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                    if e[2].get("relation") == "CITED_IN"
+                ]
+                doc_nodes.extend(doc_edges)
+            
+            # Build context
+            context_texts = []
+            for doc_id in doc_nodes[:5]:
+                if doc_id in self.graph.graph:
+                    text = self.graph.graph.nodes[doc_id].get("text", "")
+                    if text:
+                        context_texts.append(text)
+            
+            # Use LLM to find target entity
+            target_entity = self._resolve_metaphor(metaphor_name, context_texts)
+            
+            if target_entity:
+                # Resolve to canonical form
+                canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
+                
+                # Check if target exists and is different from metaphor
+                if canonical_target in self.graph.graph and canonical_target != metaphor_id:
+                    # Add IS_SAME_AS edge
+                    self.graph.add_edge(metaphor_id, canonical_target, "IS_SAME_AS")
+                    linked_count += 1
+                    print(f"      ✓ Linked '{metaphor_name}' → '{canonical_target}'")
+        
+        print(f"   ✅ Linked {linked_count} metaphorical entities")
+    
+    def _resolve_metaphor(self, metaphor: str, context_texts: List[str]) -> Optional[str]:
+        """Use LLM to resolve metaphorical reference
+        
+        Args:
+            metaphor: Metaphorical entity name
+            context_texts: Context texts
+        
+        Returns:
+            Target entity name or None
+        """
+        if not context_texts:
+            return None
+        
+        system_prompt = """You are an expert in resolving metaphorical and descriptive references to their actual entities.
+
+Given a metaphorical or descriptive name and context, identify the actual entity being referred to.
+
+Return JSON:
+{
+  "actual_entity": "<entity name or null>",
+  "confidence": "<high|medium|low>",
+  "reasoning": "<explanation>"
+}
+
+Only return an entity if confident."""
+        
+        context_str = "\n".join([f"- {text}" for text in context_texts[:5]])
+        
+        user_prompt = f"""Metaphorical reference: "{metaphor}"
+
+Context:
+{context_str}
+
+What is the actual entity being referred to?"""
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=150
+            )
+            
+            result = parse_json_response(response)
+            if result and isinstance(result, dict):
+                entity = result.get("actual_entity")
+                confidence = result.get("confidence", "low")
+                
+                if entity and confidence in ["high", "medium"]:
+                    return entity
+        except Exception as e:
+            print(f"      ⚠️ Metaphor resolution failed: {e}")
+        
+        return None
+    
+    def _enrich_entity_types(self):
+        """Enrich entity nodes with type information using RAG and verifier LLM"""
+        # Get all canonical entities (non-pronoun)
+        pronouns = ["he", "she", "it", "they", "him", "her", "his", "hers", "its", "their", 
+                   "theirs", "which", "that", "who", "whom", "this", "these", "those"]
+        
+        entity_nodes = [
+            n for n in self.graph.graph.nodes() 
+            if self.graph.graph.nodes[n].get("type") == "Entity"
+            and self.graph.graph.nodes[n].get("canonical_name", "").lower() not in pronouns
+            and not self.graph.graph.nodes[n].get("entity_type")  # Not already typed
+        ]
+        
+        print(f"   Found {len(entity_nodes)} entities to type")
+        typed_count = 0
+        
+        for entity_id in entity_nodes[:50]:  # Limit to 50 for performance
+            entity_name = self.graph.graph.nodes[entity_id].get("canonical_name", "")
+            
+            # Get context via edges
+            kriya_nodes = [
+                e[0] for e in self.graph.graph.in_edges(entity_id, data=True)
+            ]
+            
+            if not kriya_nodes:
+                continue
+            
+            # Get document context
+            doc_nodes = []
+            for k in kriya_nodes[:3]:
+                doc_edges = [
+                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                    if e[2].get("relation") == "CITED_IN"
+                ]
+                doc_nodes.extend(doc_edges)
+            
+            # Build context
+            context_texts = []
+            for doc_id in doc_nodes[:5]:
+                if doc_id in self.graph.graph:
+                    text = self.graph.graph.nodes[doc_id].get("text", "")
+                    if text:
+                        context_texts.append(text)
+            
+            # Determine entity type
+            entity_type = self._determine_entity_type(entity_name, context_texts)
+            
+            if entity_type:
+                # Add entity_type attribute
+                self.graph.graph.nodes[entity_id]["entity_type"] = entity_type
+                typed_count += 1
+                
+                if typed_count % 10 == 0:
+                    print(f"      Progress: {typed_count} entities typed", end='\r')
+        
+        print(f"\n   ✅ Typed {typed_count} entities")
+    
+    def _determine_entity_type(self, entity_name: str, context_texts: List[str]) -> Optional[str]:
+        """Use LLM to determine entity type
+        
+        Args:
+            entity_name: Entity name
+            context_texts: Context texts
+        
+        Returns:
+            Entity type or None
+        """
+        if not context_texts:
+            return None
+        
+        system_prompt = """You are an entity type classifier. Given an entity name and context, classify it into ONE of these types:
+
+- Person: Human individuals
+- Deity: Gods, goddesses, divine beings
+- Location: Places, cities, forests, mountains
+- Organization: Groups, armies, kingdoms
+- Object: Physical objects, weapons, artifacts
+- Concept: Abstract concepts, emotions, qualities
+- Animal: Animals, creatures
+- Event: Named events, battles, ceremonies
+
+Return JSON:
+{
+  "entity_type": "<type from list above>",
+  "confidence": "<high|medium|low>",
+  "reasoning": "<brief explanation>"
+}"""
+        
+        context_str = "\n".join([f"- {text}" for text in context_texts[:3]])
+        
+        user_prompt = f"""Entity: "{entity_name}"
+
+Context:
+{context_str}
+
+What type is this entity?"""
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=100
+            )
+            
+            result = parse_json_response(response)
+            if result and isinstance(result, dict):
+                entity_type = result.get("entity_type")
+                confidence = result.get("confidence", "low")
+                
+                if entity_type and confidence in ["high", "medium"]:
+                    return entity_type
+        except Exception as e:
+            pass  # Silent fail for performance
+        
+        return None
+    
+    def _detect_causal_relationships(self):
+        """Detect causal relationships between adjacent Kriyā nodes"""
+        # Get all Kriyā nodes
+        kriya_nodes = [
+            n for n in self.graph.graph.nodes() 
+            if self.graph.graph.nodes[n].get("type") == "Kriya"
+        ]
+        
+        print(f"   Analyzing {len(kriya_nodes)} Kriyā nodes for causality")
+        causal_count = 0
+        
+        # Group Kriyās by document for adjacency analysis
+        doc_kriyas = defaultdict(list)
+        for kriya_id in kriya_nodes:
+            doc_id = self.graph.graph.nodes[kriya_id].get("doc_id")
+            line_num = self.graph.graph.nodes[kriya_id].get("line_number")
+            if doc_id and line_num:
+                doc_kriyas[doc_id].append((line_num, kriya_id))
+        
+        # Sort by line number within each document
+        for doc_id in doc_kriyas:
+            doc_kriyas[doc_id].sort(key=lambda x: x[0])
+        
+        # Check adjacent Kriyās for causality
+        checked = 0
+        for doc_id, kriyas in doc_kriyas.items():
+            for i in range(len(kriyas) - 1):
+                line1, kriya1 = kriyas[i]
+                line2, kriya2 = kriyas[i + 1]
+                
+                # Only check adjacent or nearby lines (within 3 lines)
+                if line2 - line1 > 3:
+                    continue
+                
+                # Get texts for both Kriyās
+                doc_node1 = f"{doc_id}_L{line1}"
+                doc_node2 = f"{doc_id}_L{line2}"
+                
+                text1 = self.graph.graph.nodes.get(doc_node1, {}).get("text", "")
+                text2 = self.graph.graph.nodes.get(doc_node2, {}).get("text", "")
+                
+                if not text1 or not text2:
+                    continue
+                
+                # Check for causality
+                is_causal, direction = self._check_causality(
+                    kriya1, kriya2, text1, text2
+                )
+                
+                if is_causal:
+                    if direction == "forward":
+                        # kriya1 CAUSES kriya2
+                        self.graph.add_edge(kriya1, kriya2, "CAUSES")
+                        causal_count += 1
+                    elif direction == "backward":
+                        # kriya2 CAUSES kriya1
+                        self.graph.add_edge(kriya2, kriya1, "CAUSES")
+                        causal_count += 1
+                
+                checked += 1
+                if checked % 20 == 0:
+                    print(f"      Progress: {checked} pairs checked, {causal_count} causal links found", end='\r')
+        
+        print(f"\n   ✅ Found {causal_count} causal relationships")
+    
+    def _check_causality(self, kriya1_id: str, kriya2_id: str, 
+                        text1: str, text2: str) -> Tuple[bool, Optional[str]]:
+        """Use LLM to check if two Kriyās have causal relationship
+        
+        Args:
+            kriya1_id: First Kriyā node ID
+            kriya2_id: Second Kriyā node ID
+            text1: Text containing first Kriyā
+            text2: Text containing second Kriyā
+        
+        Returns:
+            Tuple of (is_causal, direction) where direction is "forward", "backward", or None
+        """
+        verb1 = self.graph.graph.nodes[kriya1_id].get("verb", "")
+        verb2 = self.graph.graph.nodes[kriya2_id].get("verb", "")
+        
+        system_prompt = """You are a causal relationship detector. Given two actions and their contexts, determine if one causes the other.
+
+Return JSON:
+{
+  "is_causal": <true|false>,
+  "direction": "<forward|backward|null>",
+  "confidence": "<high|medium|low>",
+  "reasoning": "<brief explanation>"
+}
+
+Direction:
+- "forward": First action causes second action
+- "backward": Second action causes first action
+- null: No causal relationship"""
+        
+        user_prompt = f"""Action 1: "{verb1}"
+Context 1: {text1}
+
+Action 2: "{verb2}"
+Context 2: {text2}
+
+Is there a causal relationship between these actions?"""
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=150
+            )
+            
+            result = parse_json_response(response)
+            if result and isinstance(result, dict):
+                is_causal = result.get("is_causal", False)
+                direction = result.get("direction")
+                confidence = result.get("confidence", "low")
+                
+                if is_causal and confidence in ["high", "medium"] and direction:
+                    return True, direction
+        except Exception as e:
+            pass  # Silent fail for performance
+        
+        return False, None
 
 print("✅ IngestionPipeline class defined")
 
