@@ -13,6 +13,7 @@ import re
 import os
 import sys
 import networkx as nx
+import faiss
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -145,7 +146,81 @@ print("✅ Core functions loaded")
 
 
 # ============================================================================
-# CELL 4: Graph Schema Validation
+# CELL 4: FAISS Vector Store Implementation
+# ============================================================================
+class FAISSVectorStore:
+    """Wrapper for FAISS index with document ID mapping"""
+    
+    def __init__(self, dimension: int = 768):
+        """Initialize FAISS index
+        
+        Args:
+            dimension: Embedding dimension (default 768 for Llama-3.2-NV-EmbedQA-1B-v2)
+        """
+        self.dimension = dimension
+        self.index = faiss.IndexFlatL2(dimension)
+        self.doc_id_map = []  # Maps FAISS index position to doc_id
+        self.doc_id_to_idx = {}  # Maps doc_id to FAISS index position
+    
+    def add(self, doc_id: str, embedding: np.ndarray) -> None:
+        """Add document embedding to FAISS index
+        
+        Args:
+            doc_id: Unique document identifier (e.g., "doc1_L5")
+            embedding: Embedding vector (shape: (dimension,))
+        """
+        # Ensure embedding is 2D array for FAISS
+        if embedding.ndim == 1:
+            embedding = embedding.reshape(1, -1)
+        
+        # Ensure correct dtype
+        embedding = embedding.astype('float32')
+        
+        # Add to index
+        idx = len(self.doc_id_map)
+        self.index.add(embedding)
+        self.doc_id_map.append(doc_id)
+        self.doc_id_to_idx[doc_id] = idx
+    
+    def query_nearby(self, doc_id: str, k: int = 5) -> List[str]:
+        """Query k nearest neighbors of a document
+        
+        Args:
+            doc_id: Document ID to query neighbors for
+            k: Number of neighbors to return
+        
+        Returns:
+            List of doc_ids of k nearest neighbors (excluding query doc itself)
+        """
+        if doc_id not in self.doc_id_to_idx:
+            return []
+        
+        # Get embedding vector for this doc
+        idx = self.doc_id_to_idx[doc_id]
+        query_vector = self.index.reconstruct(idx).reshape(1, -1)
+        
+        # Query k+1 neighbors (to exclude self)
+        distances, indices = self.index.search(query_vector, k + 1)
+        
+        # Filter out the query document itself and return doc_ids
+        nearby_doc_ids = []
+        for i in indices[0]:
+            if i < len(self.doc_id_map) and self.doc_id_map[i] != doc_id:
+                nearby_doc_ids.append(self.doc_id_map[i])
+                if len(nearby_doc_ids) >= k:
+                    break
+        
+        return nearby_doc_ids
+    
+    def size(self) -> int:
+        """Return number of vectors in index"""
+        return self.index.ntotal
+
+print("✅ FAISSVectorStore class defined")
+
+
+# ============================================================================
+# CELL 5: Graph Schema Validation
 # ============================================================================
 class GraphSchema:
     """Strict schema enforcement for Karaka knowledge graph"""
@@ -198,7 +273,7 @@ print("✅ Graph schema loaded")
 
 
 # ============================================================================
-# CELL 5: Entity Resolution
+# CELL 6: Entity Resolution
 # ============================================================================
 class EntityResolver:
     def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
@@ -250,7 +325,7 @@ print("✅ Entity resolver loaded")
 
 
 # ============================================================================
-# CELL 6: Kāraka Knowledge Graph
+# CELL 7: Kāraka Knowledge Graph
 # ============================================================================
 class KarakaGraph:
     def __init__(self, embedding_model, embedding_tokenizer):
@@ -410,7 +485,7 @@ print("✅ Graph class loaded")
 
 
 # ============================================================================
-# CELL 7: INGESTION STEP 1 - Load & Refine Documents
+# CELL 8: INGESTION STEP 1 - Load & Refine Documents
 # ============================================================================
 def load_and_refine_documents(docs_folder: str = "./test_documents") -> Dict[str, List[str]]:
     """
@@ -457,7 +532,7 @@ refined_docs = load_and_refine_documents()
 
 
 # ============================================================================
-# CELL 8: INGESTION STEP 2 - Extract Kārakas from Sentences
+# CELL 9: INGESTION STEP 2 - Extract Kārakas from Sentences
 # ============================================================================
 def extract_karakas_from_sentence(sentence: str, model, tokenizer) -> List[Dict]:
     """
@@ -554,7 +629,7 @@ ingest_karakas_to_graph(refined_docs, karaka_graph, llm_model, tokenizer)
 
 
 # ============================================================================
-# CELL 9: QUERY STEP 1 - Decompose Query into Kārakas
+# CELL 10: QUERY STEP 1 - Decompose Query into Kārakas
 # ============================================================================
 def decompose_query_to_karakas(question: str, model, tokenizer) -> Optional[Dict]:
     """
@@ -593,7 +668,7 @@ print("✅ Query decomposition function loaded")
 
 
 # ============================================================================
-# CELL 10: QUERY STEP 2 - Execute Search & Extract References
+# CELL 11: QUERY STEP 2 - Execute Search & Extract References
 # ============================================================================
 def execute_search_and_extract(search_plan: Dict, graph: KarakaGraph) -> Dict:
     """
@@ -660,7 +735,7 @@ print("✅ Search execution function loaded")
 
 
 # ============================================================================
-# CELL 11: QUERY STEP 3 - Form Answer with Citations
+# CELL 12: QUERY STEP 3 - Form Answer with Citations
 # ============================================================================
 def form_answer_with_citations(question: str, search_result: Dict, model, tokenizer) -> Dict:
     """
@@ -714,7 +789,7 @@ print("✅ Answer formation function loaded")
 
 
 # ============================================================================
-# CELL 12: Complete Query Pipeline
+# CELL 13: Complete Query Pipeline
 # ============================================================================
 def query_pipeline(question: str, graph: KarakaGraph, model, tokenizer) -> Dict:
     """
@@ -747,7 +822,7 @@ print("✅ Query pipeline loaded")
 
 
 # ============================================================================
-# CELL 13: Run Queries
+# CELL 14: Run Queries
 # ============================================================================
 print(f"\n{'='*80}")
 print(f"QUERY PHASE (Each LLM call is isolated)")

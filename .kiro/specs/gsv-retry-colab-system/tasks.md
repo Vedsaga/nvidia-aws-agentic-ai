@@ -20,7 +20,7 @@
   - Implement validate_edge() method
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
 
-- [ ] 4. Implement FAISSVectorStore wrapper class
+- [x] 4. Implement FAISSVectorStore wrapper class
   - Initialize FAISS index in __init__
   - Implement add(doc_id, embedding) method
   - Implement query_nearby(doc_id, k) method
