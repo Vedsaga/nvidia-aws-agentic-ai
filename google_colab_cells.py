@@ -564,7 +564,7 @@ print("✅ GSVRetryEngine class defined")
 
 
 # ============================================================================
-# CELL 7: Entity Resolution
+# CELL 6.5: Entity Resolution
 # ============================================================================
 class EntityResolver:
     def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
@@ -616,48 +616,321 @@ print("✅ Entity resolver loaded")
 
 
 # ============================================================================
-# CELL 7: Kāraka Knowledge Graph
+# CELL 7: Kāraka Knowledge Graph (with Schema Enforcement)
 # ============================================================================
-class KarakaGraph:
+class KarakaGraphV2:
+    """Enhanced Karaka Graph with strict schema validation and FAISS integration"""
+    
     def __init__(self, embedding_model, embedding_tokenizer):
+        """Initialize graph with schema enforcement and vector store
+        
+        Args:
+            embedding_model: Model for entity resolution embeddings
+            embedding_tokenizer: Tokenizer for embedding model
+        """
         self.graph = nx.MultiDiGraph()
+        self.schema = GraphSchema()
+        self.vector_store = FAISSVectorStore(dimension=768)
         self.entity_resolver = EntityResolver(embedding_model, embedding_tokenizer)
+        
+        # Indexes for fast lookup
         self.documents = {}
         self.kriyas = {}
         self.kriya_index = defaultdict(list)
         self.entity_index = defaultdict(list)
     
-    def load_from_file(self, filepath: str):
-        if not os.path.exists(filepath):
-            print(f"ℹ️  No existing graph found at {filepath}. Starting fresh.")
-            return
+    def add_document_node(self, doc_id: str, line_number: int, text: str) -> str:
+        """Add Document node with schema validation
         
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        Args:
+            doc_id: Document identifier
+            line_number: Line number in document
+            text: Original text content
         
-        self.documents = data.get('documents', {})
-        self.kriyas = data.get('kriyas', {})
-        self.kriya_index = defaultdict(list, data.get('kriya_index', {}))
-        self.entity_index = defaultdict(list, data.get('entity_index', {}))
-        self.entity_resolver.entity_map = data.get('entity_map', {})
+        Returns:
+            Node ID (format: {doc_id}_L{line_number})
+        """
+        node_id = f"{doc_id}_L{line_number}"
+        attrs = {
+            "type": "Document",
+            "doc_id": doc_id,
+            "line_number": line_number,
+            "text": text
+        }
         
-        for kriya_id, kriya_data in self.kriyas.items():
-            self.graph.add_node(kriya_id, 
-                                node_type='kriya',
-                                verb=kriya_data['verb'],
-                                doc_id=kriya_data['doc_id'],
-                                line_number=kriya_data['line_number'])
-            for karaka_type, entity in kriya_data['karakas'].items():
-                if entity not in self.graph:
-                    self.graph.add_node(entity, node_type='entity')
-                self.graph.add_edge(kriya_id, entity, 
-                                    relation=karaka_type,
-                                    doc_id=kriya_data['doc_id'],
-                                    line_number=kriya_data['line_number'])
+        # Schema validation
+        if not self.schema.validate_node(node_id, attrs):
+            raise ValueError(f"Schema validation failed for Document node {node_id}")
         
-        print(f"✅ Loaded graph: {len(self.kriyas)} kriyas, {len(self.entity_resolver.entity_map)} entities")
+        self.graph.add_node(node_id, **attrs)
+        self.documents[node_id] = attrs
+        
+        return node_id
+    
+    def add_kriya_node(self, verb: str, doc_id: str, line_number: int) -> str:
+        """Add Kriyā node with schema validation
+        
+        Args:
+            verb: Verb/action
+            doc_id: Source document ID
+            line_number: Source line number
+        
+        Returns:
+            Node ID (format: {doc_id}_L{line_number}_K{sequence})
+        """
+        sequence = len([k for k in self.kriyas.keys() if k.startswith(f"{doc_id}_L{line_number}_K")])
+        node_id = f"{doc_id}_L{line_number}_K{sequence}"
+        
+        attrs = {
+            "type": "Kriya",
+            "verb": verb,
+            "doc_id": doc_id,
+            "line_number": line_number
+        }
+        
+        # Schema validation
+        if not self.schema.validate_node(node_id, attrs):
+            raise ValueError(f"Schema validation failed for Kriya node {node_id}")
+        
+        self.graph.add_node(node_id, **attrs)
+        self.kriyas[node_id] = attrs
+        self.kriya_index[verb].append(node_id)
+        
+        return node_id
+    
+    def add_entity_node(self, canonical_name: str) -> str:
+        """Add Entity node with schema validation (idempotent)
+        
+        Args:
+            canonical_name: Canonical entity name (used as node ID)
+        
+        Returns:
+            Node ID (canonical_name)
+        """
+        node_id = canonical_name
+        
+        # Check if already exists
+        if node_id in self.graph:
+            return node_id
+        
+        attrs = {
+            "type": "Entity",
+            "canonical_name": canonical_name
+        }
+        
+        # Schema validation
+        if not self.schema.validate_node(node_id, attrs):
+            raise ValueError(f"Schema validation failed for Entity node {node_id}")
+        
+        self.graph.add_node(node_id, **attrs)
+        
+        return node_id
+    
+    def add_edge(self, source: str, target: str, relation: str, **attrs) -> None:
+        """Add edge with schema validation
+        
+        Args:
+            source: Source node ID
+            target: Target node ID
+            relation: Relation type (must be in schema)
+            **attrs: Additional edge attributes
+        """
+        # Schema validation
+        if not self.schema.validate_edge(source, target, relation):
+            raise ValueError(f"Schema validation failed for edge {source} → {target} with relation {relation}")
+        
+        # Add relation to attrs
+        attrs['relation'] = relation
+        
+        self.graph.add_edge(source, target, **attrs)
+        
+        # Update entity index if this is a kāraka relation
+        if relation in ["HAS_KARTĀ", "HAS_KARMA", "USES_KARANA", "TARGETS_SAMPRADĀNA", 
+                       "FROM_APĀDĀNA", "LOCATED_IN", "OCCURS_AT"] and source in self.kriyas:
+            self.entity_index[target].append(source)
+    
+    def traverse(self, start_node: str, edge_filter: Optional[List[str]] = None, 
+                max_hops: int = 3, direction: str = "out") -> List[str]:
+        """Multi-hop graph traversal with edge filtering
+        
+        Args:
+            start_node: Starting node ID
+            edge_filter: List of relation types to follow (None = all)
+            max_hops: Maximum traversal depth
+            direction: "out" (outgoing), "in" (incoming), or "both"
+        
+        Returns:
+            List of reachable node IDs
+        """
+        if start_node not in self.graph:
+            return []
+        
+        visited = set()
+        current_level = {start_node}
+        
+        for hop in range(max_hops):
+            next_level = set()
+            
+            for node in current_level:
+                if node in visited:
+                    continue
+                visited.add(node)
+                
+                # Get neighbors based on direction
+                if direction in ["out", "both"]:
+                    for _, target, data in self.graph.out_edges(node, data=True):
+                        if edge_filter is None or data.get('relation') in edge_filter:
+                            next_level.add(target)
+                
+                if direction in ["in", "both"]:
+                    for source, _, data in self.graph.in_edges(node, data=True):
+                        if edge_filter is None or data.get('relation') in edge_filter:
+                            next_level.add(source)
+            
+            current_level = next_level
+            
+            if not current_level:
+                break
+        
+        return list(visited)
+    
+    def get_cited_documents(self, kriya_ids: List[str]) -> List[Dict]:
+        """Retrieve Document node texts for given Kriyā nodes
+        
+        Args:
+            kriya_ids: List of Kriyā node IDs
+        
+        Returns:
+            List of dicts with doc_id, line_number, text
+        """
+        documents = []
+        
+        for kriya_id in kriya_ids:
+            if kriya_id not in self.graph:
+                continue
+            
+            # Follow CITED_IN edges
+            for _, target, data in self.graph.out_edges(kriya_id, data=True):
+                if data.get('relation') == 'CITED_IN' and target in self.documents:
+                    doc_attrs = self.graph.nodes[target]
+                    documents.append({
+                        'doc_id': doc_attrs['doc_id'],
+                        'line_number': doc_attrs['line_number'],
+                        'text': doc_attrs['text']
+                    })
+        
+        return documents
+    
+    def get_neighbors(self, node_id: str, relation: Optional[str] = None, 
+                     direction: str = "out") -> List[str]:
+        """Get neighbors of a node with optional relation filter
+        
+        Args:
+            node_id: Node ID
+            relation: Relation type filter (None = all)
+            direction: "out", "in", or "both"
+        
+        Returns:
+            List of neighbor node IDs
+        """
+        if node_id not in self.graph:
+            return []
+        
+        neighbors = []
+        
+        if direction in ["out", "both"]:
+            for _, target, data in self.graph.out_edges(node_id, data=True):
+                if relation is None or data.get('relation') == relation:
+                    neighbors.append(target)
+        
+        if direction in ["in", "both"]:
+            for source, _, data in self.graph.in_edges(node_id, data=True):
+                if relation is None or data.get('relation') == relation:
+                    neighbors.append(source)
+        
+        return neighbors
+    
+    def find_kriyas(self, verb: Optional[str] = None, **karaka_constraints) -> List[str]:
+        """Find Kriyā nodes matching verb and kāraka constraints
+        
+        Args:
+            verb: Verb to match (None = any)
+            **karaka_constraints: Kāraka constraints (e.g., KARTA="Rama")
+        
+        Returns:
+            List of matching Kriyā node IDs
+        """
+        # Start with verb filter if provided
+        if verb:
+            candidate_ids = self.kriya_index.get(verb, [])
+        else:
+            candidate_ids = list(self.kriyas.keys())
+        
+        # Apply kāraka constraints
+        results = []
+        for kriya_id in candidate_ids:
+            match = True
+            
+            for karaka_type, required_entity in karaka_constraints.items():
+                if not required_entity:
+                    continue
+                
+                # Resolve entity
+                canonical = self.entity_resolver.resolve_entity(required_entity)
+                
+                # Map kāraka type to relation
+                relation_map = {
+                    "KARTA": "HAS_KARTĀ",
+                    "KARMA": "HAS_KARMA",
+                    "KARANA": "USES_KARANA",
+                    "SAMPRADANA": "TARGETS_SAMPRADĀNA",
+                    "APADANA": "FROM_APĀDĀNA",
+                    "ADHIKARANA_SPATIAL": "LOCATED_IN",
+                    "ADHIKARANA_TEMPORAL": "OCCURS_AT"
+                }
+                relation = relation_map.get(karaka_type, karaka_type)
+                
+                # Check if edge exists (FROM Kriyā TO Entity)
+                edges = [e for e in self.graph.out_edges(kriya_id, data=True)
+                        if e[1] == canonical and e[2].get('relation') == relation]
+                
+                if not edges:
+                    match = False
+                    break
+            
+            if match:
+                results.append(kriya_id)
+        
+        return results
+    
+    def get_citation(self, kriya_id: str) -> Optional[Citation]:
+        """Get citation for a Kriyā node
+        
+        Args:
+            kriya_id: Kriyā node ID
+        
+        Returns:
+            Citation object or None
+        """
+        if kriya_id not in self.kriyas:
+            return None
+        
+        kriya_attrs = self.graph.nodes[kriya_id]
+        
+        # Find cited document
+        doc_node_id = f"{kriya_attrs['doc_id']}_L{kriya_attrs['line_number']}"
+        if doc_node_id in self.documents:
+            doc_attrs = self.graph.nodes[doc_node_id]
+            return Citation(
+                document_id=doc_attrs['doc_id'],
+                line_number=doc_attrs['line_number'],
+                original_text=doc_attrs['text']
+            )
+        
+        return None
     
     def save_to_file(self, filepath: str):
+        """Save graph to JSON file"""
         data = {
             'documents': self.documents,
             'kriyas': self.kriyas,
@@ -667,7 +940,7 @@ class KarakaGraph:
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
                 'total_kriyas': len(self.kriyas),
-                'total_entities': len([n for n in self.graph.nodes() if self.graph.nodes[n].get('node_type') == 'entity']),
+                'total_entities': len([n for n in self.graph.nodes() if self.graph.nodes[n].get('type') == 'Entity']),
                 'total_documents': len(self.documents)
             }
         }
@@ -676,103 +949,11 @@ class KarakaGraph:
         print(f"✅ Graph saved to {filepath}")
     
     def export_visualization(self, filepath: str):
+        """Export graph to GEXF format for visualization"""
         nx.write_gexf(self.graph, filepath)
         print(f"✅ Graph exported to {filepath}")
-    
-    def add_document(self, doc_id: str, metadata: Dict):
-        if doc_id in self.documents:
-            print(f"ℹ️  Document {doc_id} already exists. Appending new content.")
-        else:
-            self.documents[doc_id] = metadata
-    
-    def add_kriya(self, verb: str, karakas: Dict[str, str], doc_id: str, line_number: int, original_text: str) -> str:
-        resolved_karakas = {
-            k_type: self.entity_resolver.resolve_entity(entity)
-            for k_type, entity in karakas.items()
-            if entity and entity.strip()
-        }
-        
-        for existing_id, existing_kriya in self.kriyas.items():
-            if (existing_kriya['verb'] == verb and
-                existing_kriya['karakas'] == resolved_karakas and
-                existing_kriya['doc_id'] == doc_id and
-                existing_kriya['line_number'] == line_number):
-                print(f"    ↻ Duplicate kriya detected. Reusing: {existing_id}")
-                return existing_id
-        
-        kriya_id = f"{doc_id}_L{line_number}_K{len(self.kriyas)}"
-        kriya_data = {
-            'verb': verb,
-            'karakas': resolved_karakas,
-            'doc_id': doc_id,
-            'line_number': line_number,
-            'original_text': original_text
-        }
-        self.kriyas[kriya_id] = kriya_data
-        self.kriya_index[verb].append(kriya_id)
-        
-        self.graph.add_node(kriya_id,
-                            node_type='kriya',
-                            verb=verb,
-                            doc_id=doc_id,
-                            line_number=line_number)
-        
-        for karaka_type, entity in resolved_karakas.items():
-            if entity not in self.graph:
-                self.graph.add_node(entity, node_type='entity')
-            self.graph.add_edge(kriya_id, entity,
-                                relation=karaka_type,
-                                doc_id=doc_id,
-                                line_number=line_number)
-            self.entity_index[entity].append(kriya_id)
-        
-        return kriya_id
-    
-    def find_kriyas(self, verb: Optional[str] = None, **karaka_constraints) -> List[str]:
-        if verb:
-            candidate_ids = self.kriya_index.get(verb, [])
-        else:
-            candidate_ids = list(self.kriyas.keys())
-        
-        results = []
-        for kriya_id in candidate_ids:
-            kriya = self.kriyas[kriya_id]
-            match = True
-            for karaka_type, required_entity in karaka_constraints.items():
-                if required_entity is None:
-                    continue
-                resolved_query = self.entity_resolver.resolve_entity(required_entity)
-                kriya_entity = kriya['karakas'].get(karaka_type)
-                if kriya_entity != resolved_query:
-                    match = False
-                    break
-            if match:
-                results.append(kriya_id)
-        return results
-    
-    def get_citation(self, kriya_id: str) -> Optional[Citation]:
-        kriya = self.kriyas.get(kriya_id)
-        if not kriya:
-            return None
-        return Citation(
-            document_id=kriya['doc_id'],
-            line_number=kriya['line_number'],
-            original_text=kriya['original_text']
-        )
-    
-    def get_stats(self) -> Dict:
-        entity_nodes = [n for n in self.graph.nodes() if self.graph.nodes[n].get('node_type') == 'entity']
-        kriya_nodes = [n for n in self.graph.nodes() if self.graph.nodes[n].get('node_type') == 'kriya']
-        return {
-            'total_documents': len(self.documents),
-            'total_kriyas': len(kriya_nodes),
-            'total_entities': len(entity_nodes),
-            'total_edges': self.graph.number_of_edges(),
-            'unique_verbs': len(self.kriya_index),
-            'avg_karakas_per_kriya': self.graph.number_of_edges() / len(kriya_nodes) if kriya_nodes else 0
-        }
 
-print("✅ Graph class loaded")
+print("✅ KarakaGraphV2 class defined")
 
 
 # ============================================================================

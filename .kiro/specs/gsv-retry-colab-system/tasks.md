@@ -38,7 +38,7 @@
   - Implement _log_failure() with detailed diagnostics
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10, 5.11, 5.12, 5.13, 5.14, 5.15, 5.16_
 
-- [-] 6. Update KarakaGraphV2 with schema enforcement
+- [x] 6. Update KarakaGraphV2 with schema enforcement
   - Add GraphSchema instance to __init__
   - Add FAISSVectorStore instance to __init__
   - Implement add_document_node() with schema validation
