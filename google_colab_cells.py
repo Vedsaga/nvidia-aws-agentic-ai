@@ -405,9 +405,12 @@ class GSVRetryEngine:
             print("Gen", end="", flush=True)
             candidates = self._generate_candidates(text, base_prompt, feedback_prompt)
             
-            # DEBUG: Show first candidate on first attempt
-            if attempt == 0 and candidates and len(candidates) > 0:
-                print(f"\n          📋 Sample candidate: {json.dumps(candidates[0]['data'], ensure_ascii=False)[:150]}...", end="", flush=True)
+            # DEBUG: Show all candidates on first attempt
+            if attempt == 0 and candidates:
+                print(f"\n          📋 All {len(candidates)} candidates:")
+                for c in candidates:
+                    print(f"            {c['id']}: {json.dumps(c['data'], ensure_ascii=False)}")
+                print("          ", end="", flush=True)
             
             if not candidates:
                 print(" ❌ No candidates")
@@ -601,7 +604,8 @@ class GSVRetryEngine:
             
             # DEBUG: Show what we're sending to verifier (first time only)
             if not hasattr(self, '_debug_shown'):
-                print(f"\n          📤 Verifier input: {context_str[:400]}")
+                print(f"\n          📤 Verifier input (full):")
+                print(context_str)
                 self._debug_shown = True
             
             response = call_llm_isolated(
