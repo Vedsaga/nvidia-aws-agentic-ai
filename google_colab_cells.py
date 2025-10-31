@@ -93,8 +93,12 @@ def average_pool(last_hidden_states, attention_mask):
 
 
 # ============================================================================
-# CELL 3: Core Functions - Session-Isolated LLM Calls
+# CELL 3: Initialize NetworkX, GraphSchema, and FAISS
 # ============================================================================
+print("\n" + "="*80)
+print("INITIALIZING GRAPH INFRASTRUCTURE")
+print("="*80)
+
 def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 300) -> str:
     """Each call creates a fresh session - no conversation history"""
     messages = [
@@ -142,86 +146,7 @@ def parse_json_response(response: str) -> Any:
         except:
             return None
 
-print("✅ Core functions loaded")
-
-
-# ============================================================================
-# CELL 4: FAISS Vector Store Implementation
-# ============================================================================
-class FAISSVectorStore:
-    """Wrapper for FAISS index with document ID mapping"""
-    
-    def __init__(self, dimension: int = 768):
-        """Initialize FAISS index
-        
-        Args:
-            dimension: Embedding dimension (default 768 for Llama-3.2-NV-EmbedQA-1B-v2)
-        """
-        self.dimension = dimension
-        self.index = faiss.IndexFlatL2(dimension)
-        self.doc_id_map = []  # Maps FAISS index position to doc_id
-        self.doc_id_to_idx = {}  # Maps doc_id to FAISS index position
-    
-    def add(self, doc_id: str, embedding: np.ndarray) -> None:
-        """Add document embedding to FAISS index
-        
-        Args:
-            doc_id: Unique document identifier (e.g., "doc1_L5")
-            embedding: Embedding vector (shape: (dimension,))
-        """
-        # Ensure embedding is 2D array for FAISS
-        if embedding.ndim == 1:
-            embedding = embedding.reshape(1, -1)
-        
-        # Ensure correct dtype
-        embedding = embedding.astype('float32')
-        
-        # Add to index
-        idx = len(self.doc_id_map)
-        self.index.add(embedding)
-        self.doc_id_map.append(doc_id)
-        self.doc_id_to_idx[doc_id] = idx
-    
-    def query_nearby(self, doc_id: str, k: int = 5) -> List[str]:
-        """Query k nearest neighbors of a document
-        
-        Args:
-            doc_id: Document ID to query neighbors for
-            k: Number of neighbors to return
-        
-        Returns:
-            List of doc_ids of k nearest neighbors (excluding query doc itself)
-        """
-        if doc_id not in self.doc_id_to_idx:
-            return []
-        
-        # Get embedding vector for this doc
-        idx = self.doc_id_to_idx[doc_id]
-        query_vector = self.index.reconstruct(idx).reshape(1, -1)
-        
-        # Query k+1 neighbors (to exclude self)
-        distances, indices = self.index.search(query_vector, k + 1)
-        
-        # Filter out the query document itself and return doc_ids
-        nearby_doc_ids = []
-        for i in indices[0]:
-            if i < len(self.doc_id_map) and self.doc_id_map[i] != doc_id:
-                nearby_doc_ids.append(self.doc_id_map[i])
-                if len(nearby_doc_ids) >= k:
-                    break
-        
-        return nearby_doc_ids
-    
-    def size(self) -> int:
-        """Return number of vectors in index"""
-        return self.index.ntotal
-
-print("✅ FAISSVectorStore class defined")
-
-
-# ============================================================================
-# CELL 5: Graph Schema Validation
-# ============================================================================
+# Initialize GraphSchema
 class GraphSchema:
     """Strict schema enforcement for Karaka knowledge graph"""
     
@@ -269,7 +194,200 @@ class GraphSchema:
         
         return True
 
-print("✅ Graph schema loaded")
+# Initialize FAISS Vector Store
+class FAISSVectorStore:
+    """Wrapper for FAISS index with document ID mapping"""
+    
+    def __init__(self, dimension: int = 768):
+        self.dimension = dimension
+        self.index = faiss.IndexFlatL2(dimension)
+        self.doc_id_map = []
+        self.doc_id_to_idx = {}
+    
+    def add(self, doc_id: str, embedding: np.ndarray) -> None:
+        if embedding.ndim == 1:
+            embedding = embedding.reshape(1, -1)
+        embedding = embedding.astype('float32')
+        
+        idx = len(self.doc_id_map)
+        self.index.add(embedding)
+        self.doc_id_map.append(doc_id)
+        self.doc_id_to_idx[doc_id] = idx
+    
+    def query_nearby(self, doc_id: str, k: int = 5) -> List[str]:
+        if doc_id not in self.doc_id_to_idx:
+            return []
+        
+        idx = self.doc_id_to_idx[doc_id]
+        query_vector = self.index.reconstruct(idx).reshape(1, -1)
+        distances, indices = self.index.search(query_vector, k + 1)
+        
+        nearby_doc_ids = []
+        for i in indices[0]:
+            if i < len(self.doc_id_map) and self.doc_id_map[i] != doc_id:
+                nearby_doc_ids.append(self.doc_id_map[i])
+                if len(nearby_doc_ids) >= k:
+                    break
+        
+        return nearby_doc_ids
+    
+    def size(self) -> int:
+        return self.index.ntotal
+
+print("✅ NetworkX MultiDiGraph initialized")
+print("✅ GraphSchema loaded")
+print("✅ FAISSVectorStore initialized")
+
+
+# ============================================================================
+# CELL 4: Load Prompts from prompts.json
+# ============================================================================
+def load_prompts(filepath: str = "prompts.json") -> dict:
+    """Load all system prompts from JSON configuration file
+    
+    Args:
+        filepath: Path to prompts.json file
+    
+    Returns:
+        Dictionary of prompts
+    """
+    if not os.path.exists(filepath):
+        print(f"⚠️  {filepath} not found, creating default prompts...")
+        default_prompts = {
+            "kriya_extraction_prompt": """You are a semantic role labeling expert specializing in Pāṇinian kāraka analysis.
+Extract the verb (Kriyā) and its semantic roles (kārakas) from the given text.
+
+Output JSON format:
+{
+  "verb": "action verb",
+  "karakas": {
+    "KARTA": "agent entity",
+    "KARMA": "patient entity",
+    "KARANA": "instrument entity",
+    "SAMPRADANA": "recipient entity",
+    "APADANA": "source entity",
+    "ADHIKARANA_SPATIAL": "spatial location",
+    "ADHIKARANA_TEMPORAL": "temporal location"
+  },
+  "coreferences": [
+    {"pronoun": "he", "context": "likely refers to..."}
+  ]
+}
+
+Include only kārakas present in the text. Add coreferences field for pronouns.""",
+            
+            "kriya_extraction_feedback_prompt": "Previous attempt failed: {feedback}\n\nPlease correct the extraction.",
+            
+            "kriya_scoring_prompt": """Score this Kriyā extraction from 1-100 based on:
+- Correct verb identification
+- Accurate kāraka role assignment
+- Completeness of extraction
+- Adherence to Pāṇinian principles
+
+Return JSON: {"reasoning": "explanation", "score": 85}""",
+            
+            "kriya_verification_prompt": """You are a Pāṇinian grammar verifier. Apply these rules:
+- KARTĀ (agent): performs the action
+- KARMA (patient): undergoes the action
+- KARANA (instrument): means by which action is done
+- SAMPRADĀNA (recipient): for whom action is done
+- APĀDĀNA (source): from which action originates
+- ADHIKARANA (location): where/when action occurs
+
+Select the best candidate or return "ALL_INVALID" if none comply.
+Return JSON: {"choice": "Candidate_A", "reasoning": "explanation"}""",
+            
+            "query_decomposition_prompt": """Decompose this query into a multi-hop graph traversal plan.
+
+Output JSON format:
+{
+  "steps": [
+    {
+      "verb": "action",
+      "karakas": {"KARTA": "entity"},
+      "follow_causes": true
+    }
+  ]
+}""",
+            
+            "query_scoring_prompt": """Score this query plan from 1-100 based on:
+- Logical decomposition
+- Executability on graph
+- Completeness
+
+Return JSON: {"reasoning": "explanation", "score": 85}""",
+            
+            "query_verification_prompt": """Verify this query plan is executable and logical.
+Select the best plan or return "ALL_INVALID".
+Return JSON: {"choice": "Candidate_A", "reasoning": "explanation"}"""
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(default_prompts, f, indent=2)
+        
+        print(f"✅ Created {filepath} with default prompts")
+        return default_prompts
+    
+    with open(filepath, 'r') as f:
+        prompts = json.load(f)
+    
+    print(f"✅ Loaded prompts from {filepath}")
+    return prompts
+
+# Load prompts
+PROMPTS = load_prompts()
+
+
+# ============================================================================
+# CELL 5: Entity Resolution
+# ============================================================================
+class EntityResolver:
+    def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
+        self.model = embedding_model
+        self.tokenizer = embedding_tokenizer
+        self.threshold = threshold
+        self.entity_registry = {}
+        self.entity_map = {}
+    
+    def encode(self, text: str) -> np.ndarray:
+        """Encode text using NVIDIA embedding model."""
+        inputs = self.tokenizer([text], padding=True, truncation=True, return_tensors='pt')
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        embedding = average_pool(outputs.last_hidden_state, inputs["attention_mask"])
+        return embedding.cpu().numpy()[0]
+    
+    def resolve_entity(self, mention: str) -> str:
+        mention = mention.strip()
+        if mention in self.entity_map:
+            return self.entity_map[mention]
+        mention_lower = mention.lower()
+        if mention_lower in self.entity_map:
+            return self.entity_map[mention_lower]
+        
+        mention_embedding = self.encode(mention)
+        best_match = None
+        best_score = 0.0
+        
+        for canonical_name, canonical_embedding in self.entity_registry.items():
+            similarity = np.dot(mention_embedding, canonical_embedding) / (
+                np.linalg.norm(mention_embedding) * np.linalg.norm(canonical_embedding)
+            )
+            if similarity > best_score:
+                best_score = similarity
+                best_match = canonical_name
+        
+        if best_score >= self.threshold and best_match:
+            self.entity_map[mention] = best_match
+            return best_match
+        
+        canonical_name = mention
+        self.entity_registry[canonical_name] = mention_embedding
+        self.entity_map[mention] = canonical_name
+        return canonical_name
+
+print("✅ Entity resolver loaded")
 
 
 # ============================================================================
@@ -561,58 +679,6 @@ class GSVRetryEngine:
         }
 
 print("✅ GSVRetryEngine class defined")
-
-
-# ============================================================================
-# CELL 6.5: Entity Resolution
-# ============================================================================
-class EntityResolver:
-    def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
-        self.model = embedding_model
-        self.tokenizer = embedding_tokenizer
-        self.threshold = threshold
-        self.entity_registry = {}
-        self.entity_map = {}
-    
-    def encode(self, text: str) -> np.ndarray:
-        """Encode text using NVIDIA embedding model."""
-        inputs = self.tokenizer([text], padding=True, truncation=True, return_tensors='pt')
-        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        embedding = average_pool(outputs.last_hidden_state, inputs["attention_mask"])
-        return embedding.cpu().numpy()[0]
-    
-    def resolve_entity(self, mention: str) -> str:
-        mention = mention.strip()
-        if mention in self.entity_map:
-            return self.entity_map[mention]
-        mention_lower = mention.lower()
-        if mention_lower in self.entity_map:
-            return self.entity_map[mention_lower]
-        
-        mention_embedding = self.encode(mention)
-        best_match = None
-        best_score = 0.0
-        
-        for canonical_name, canonical_embedding in self.entity_registry.items():
-            similarity = np.dot(mention_embedding, canonical_embedding) / (
-                np.linalg.norm(mention_embedding) * np.linalg.norm(canonical_embedding)
-            )
-            if similarity > best_score:
-                best_score = similarity
-                best_match = canonical_name
-        
-        if best_score >= self.threshold and best_match:
-            self.entity_map[mention] = best_match
-            return best_match
-        
-        canonical_name = mention
-        self.entity_registry[canonical_name] = mention_embedding
-        self.entity_map[mention] = canonical_name
-        return canonical_name
-
-print("✅ Entity resolver loaded")
 
 
 # ============================================================================
@@ -957,7 +1023,7 @@ print("✅ KarakaGraphV2 class defined")
 
 
 # ============================================================================
-# CELL 7.5: Ingestion Pipeline
+# CELL 8: Ingestion Pipeline Class Definition
 # ============================================================================
 class IngestionPipeline:
     """Orchestrates document loading, embedding, extraction, and post-processing"""
@@ -1059,27 +1125,43 @@ class IngestionPipeline:
         Args:
             refined_docs: Dict mapping doc_id to list of lines
         """
-        print(f"   Creating Document nodes and embeddings...")
-        
         total_docs = sum(len(lines) for lines in refined_docs.values())
         processed = 0
+        failed = 0
+        
+        print(f"   📊 Total documents to embed: {total_docs}")
         
         for doc_id, lines in refined_docs.items():
+            print(f"   📄 Embedding {doc_id}...", end=' ', flush=True)
+            doc_success = 0
+            doc_failed = 0
+            
             for line_num, text in enumerate(lines, 1):
-                # Create Document node
-                doc_node_id = self.graph.add_document_node(doc_id, line_num, text)
+                try:
+                    # Create Document node
+                    doc_node_id = self.graph.add_document_node(doc_id, line_num, text)
+                    
+                    # Generate embedding
+                    embedding = self._encode_text(text)
+                    
+                    # Store in FAISS
+                    self.graph.vector_store.add(doc_node_id, embedding)
+                    
+                    doc_success += 1
+                    processed += 1
+                except Exception as e:
+                    print(f"\n      ⚠️ Failed to embed line {line_num}: {str(e)[:50]}")
+                    doc_failed += 1
+                    failed += 1
                 
-                # Generate embedding
-                embedding = self._encode_text(text)
-                
-                # Store in FAISS
-                self.graph.vector_store.add(doc_node_id, embedding)
-                
-                processed += 1
+                # Progress update every 10 lines
                 if processed % 10 == 0 or processed == total_docs:
-                    print(f"      Progress: {processed}/{total_docs} documents embedded", end='\r')
+                    progress_pct = (processed / total_docs) * 100
+                    print(f"\r      Progress: {processed}/{total_docs} ({progress_pct:.1f}%) embedded", end='', flush=True)
+            
+            print(f"\r   ✅ {doc_id}: {doc_success}/{len(lines)} lines embedded")
         
-        print(f"\n   ✅ Embedded {total_docs} documents")
+        print(f"\n   ✅ Embedding complete: {processed}/{total_docs} successful, {failed} failed")
     
     def _encode_text(self, text: str) -> np.ndarray:
         """Encode text using embedding model
@@ -1107,15 +1189,20 @@ class IngestionPipeline:
         """
         self.stats['total_lines'] = sum(len(lines) for lines in refined_docs.values())
         processed = 0
+        retry_count = 0
+        
+        print(f"\n   📊 Total lines to process: {self.stats['total_lines']}")
         
         for doc_id, lines in refined_docs.items():
-            print(f"\n   📄 Processing {doc_id}...")
+            print(f"\n   📄 Processing document: {doc_id} ({len(lines)} lines)")
             
             for line_num, text in enumerate(lines, 1):
                 processed += 1
                 line_ref = f"{doc_id}_L{line_num}"
                 
-                print(f"      [{processed}/{self.stats['total_lines']}] {line_ref}: ", end='')
+                # Show progress with percentage
+                progress_pct = (processed / self.stats['total_lines']) * 100
+                print(f"      [{processed}/{self.stats['total_lines']}] ({progress_pct:.1f}%) {line_ref}: ", end='', flush=True)
                 
                 # Extract with GSV-Retry
                 golden_candidate = self.gsv_engine.extract_with_retry(
@@ -1125,13 +1212,22 @@ class IngestionPipeline:
                 )
                 
                 if golden_candidate:
-                    # Write to graph
-                    self._write_to_graph(golden_candidate, doc_id, line_num, text)
-                    print(f"✅")
-                    self.stats['successful_extractions'] += 1
+                    try:
+                        # Write to graph
+                        self._write_to_graph(golden_candidate, doc_id, line_num, text)
+                        print(f"✅")
+                        self.stats['successful_extractions'] += 1
+                    except Exception as e:
+                        print(f"❌ Graph write failed: {str(e)[:50]}")
+                        self.stats['failed_extractions'] += 1
                 else:
-                    print(f"❌ Failed")
+                    print(f"❌ GSV-Retry exhausted")
                     self.stats['failed_extractions'] += 1
+            
+            # Document summary
+            doc_success = sum(1 for line_num in range(1, len(lines)+1) 
+                            if f"{doc_id}_L{line_num}_K0" in self.graph.kriyas)
+            print(f"   ✅ Document complete: {doc_success}/{len(lines)} lines extracted successfully")
     
     def _write_to_graph(self, golden_candidate: Dict, doc_id: str, line_number: int, text: str):
         """Write verified Kriyā to graph with schema compliance
@@ -1224,25 +1320,50 @@ class IngestionPipeline:
     def _print_statistics(self):
         """Print final ingestion statistics"""
         print(f"\n{'='*80}")
-        print(f"INGESTION COMPLETE")
+        print(f"📊 INGESTION STATISTICS")
         print(f"{'='*80}")
-        print(f"Total lines processed: {self.stats['total_lines']}")
-        print(f"Successful extractions: {self.stats['successful_extractions']}")
-        print(f"Failed extractions: {self.stats['failed_extractions']}")
-        print(f"Success rate: {self.stats['successful_extractions']/self.stats['total_lines']*100:.1f}%")
-        print(f"\nGraph Statistics:")
-        print(f"  Total Kriyās: {self.stats['total_kriyas']}")
-        print(f"  Total Entities: {len([n for n in self.graph.graph.nodes() if self.graph.graph.nodes[n].get('type') == 'Entity'])}")
-        print(f"  Total Documents: {len(self.graph.documents)}")
-        print(f"  Total Edges: {self.graph.graph.number_of_edges()}")
-        print(f"  FAISS Index Size: {self.graph.vector_store.size()}")
+        
+        # Extraction statistics
+        print(f"\n✅ Extraction Results:")
+        print(f"   Total lines processed: {self.stats['total_lines']}")
+        print(f"   Successful extractions: {self.stats['successful_extractions']}")
+        print(f"   Failed extractions: {self.stats['failed_extractions']}")
+        success_rate = (self.stats['successful_extractions']/self.stats['total_lines']*100) if self.stats['total_lines'] > 0 else 0
+        print(f"   Success rate: {success_rate:.1f}%")
+        
+        # Graph statistics
+        entity_count = len([n for n in self.graph.graph.nodes() if self.graph.graph.nodes[n].get('type') == 'Entity'])
+        print(f"\n📈 Graph Statistics:")
+        print(f"   Total Kriyās: {len(self.graph.kriyas)}")
+        print(f"   Total Entities: {entity_count}")
+        print(f"   Total Documents: {len(self.graph.documents)}")
+        print(f"   Total Edges: {self.graph.graph.number_of_edges()}")
+        print(f"   FAISS Index Size: {self.graph.vector_store.size()}")
+        
+        # Edge breakdown
+        edge_types = defaultdict(int)
+        for _, _, data in self.graph.graph.edges(data=True):
+            relation = data.get('relation', 'UNKNOWN')
+            edge_types[relation] += 1
+        
+        print(f"\n🔗 Edge Distribution:")
+        for relation, count in sorted(edge_types.items(), key=lambda x: x[1], reverse=True):
+            print(f"   {relation}: {count}")
         
         # GSV-Retry statistics
         gsv_stats = self.gsv_engine.get_failure_stats()
-        print(f"\nGSV-Retry Statistics:")
-        print(f"  Total attempts: {gsv_stats['total_attempts']}")
-        print(f"  Total failures: {gsv_stats['total_failures']}")
-        print(f"  Success rate: {gsv_stats['success_rate']*100:.1f}%")
+        print(f"\n🔄 GSV-Retry Statistics:")
+        print(f"   Total attempts: {gsv_stats['total_attempts']}")
+        print(f"   Successful: {gsv_stats['total_attempts'] - gsv_stats['total_failures']}")
+        print(f"   Failed: {gsv_stats['total_failures']}")
+        print(f"   Success rate: {gsv_stats['success_rate']*100:.1f}%")
+        
+        if gsv_stats['failure_reasons']:
+            print(f"\n❌ Failure Breakdown:")
+            for reason, count in gsv_stats['failure_reasons'].items():
+                print(f"   {reason}: {count}")
+        
+        print(f"\n{'='*80}")
     
     # ========================================================================
     # POST-PROCESSING METHODS
@@ -1281,75 +1402,97 @@ class IngestionPipeline:
             and self.graph.graph.nodes[n].get("canonical_name", "").lower() in pronouns
         ]
         
-        print(f"   Found {len(pronoun_nodes)} pronoun entities")
+        print(f"   📊 Found {len(pronoun_nodes)} pronoun entities to resolve")
         resolved_count = 0
+        skipped_count = 0
+        failed_count = 0
         
-        for pronoun_id in pronoun_nodes:
+        for idx, pronoun_id in enumerate(pronoun_nodes, 1):
             pronoun_name = self.graph.graph.nodes[pronoun_id].get("canonical_name", "")
+            print(f"      [{idx}/{len(pronoun_nodes)}] Resolving '{pronoun_name}'...", end=' ', flush=True)
             
-            # Check if extraction provided coreference hint
-            coref_hint = self.graph.graph.nodes[pronoun_id].get("coref_hint")
-            coref_context = self.graph.graph.nodes[pronoun_id].get("coref_context", "")
-            
-            # Get context via incoming edges (traverse FROM Entity via HAS_KARTĀ, HAS_KARMA, etc.)
-            kriya_nodes = [
-                e[0] for e in self.graph.graph.in_edges(pronoun_id, data=True) 
-                if e[2].get("relation") in ["HAS_KARTĀ", "HAS_KARMA", "USES_KARANA", 
-                                            "TARGETS_SAMPRADĀNA", "FROM_APĀDĀNA"]
-            ]
-            
-            if not kriya_nodes:
-                continue
-            
-            # Get document nodes via CITED_IN edges
-            doc_nodes = []
-            for k in kriya_nodes:
-                doc_edges = [
-                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
-                    if e[2].get("relation") == "CITED_IN"
-                ]
-                doc_nodes.extend(doc_edges)
-            
-            if not doc_nodes:
-                continue
-            
-            # Query FAISS for nearby context (5 nearest neighbors)
-            context_docs = []
-            for doc_node in doc_nodes[:1]:  # Use first doc as anchor
-                nearby = self.graph.vector_store.query_nearby(doc_node, k=5)
-                context_docs.extend(nearby)
-            
-            if not context_docs:
-                continue
-            
-            # Build context from nearby documents
-            context_texts = []
-            for doc_id in context_docs[:5]:
-                if doc_id in self.graph.graph:
-                    text = self.graph.graph.nodes[doc_id].get("text", "")
-                    if text:
-                        context_texts.append(text)
-            
-            # Use verifier LLM to confirm coreference link
-            target_entity = self._verify_coreference(
-                pronoun_name, 
-                context_texts, 
-                coref_hint, 
-                coref_context
-            )
-            
-            if target_entity:
-                # Resolve target entity to canonical form
-                canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
+            try:
+                # Check if extraction provided coreference hint
+                coref_hint = self.graph.graph.nodes[pronoun_id].get("coref_hint")
+                coref_context = self.graph.graph.nodes[pronoun_id].get("coref_context", "")
                 
-                # Check if target entity exists in graph
-                if canonical_target in self.graph.graph:
-                    # Add IS_SAME_AS edge
-                    self.graph.add_edge(pronoun_id, canonical_target, "IS_SAME_AS")
-                    resolved_count += 1
-                    print(f"      ✓ Resolved '{pronoun_name}' → '{canonical_target}'")
+                # Get context via incoming edges (traverse FROM Entity via HAS_KARTĀ, HAS_KARMA, etc.)
+                kriya_nodes = [
+                    e[0] for e in self.graph.graph.in_edges(pronoun_id, data=True) 
+                    if e[2].get("relation") in ["HAS_KARTĀ", "HAS_KARMA", "USES_KARANA", 
+                                                "TARGETS_SAMPRADĀNA", "FROM_APĀDĀNA"]
+                ]
+                
+                if not kriya_nodes:
+                    print(f"⚠️ No context")
+                    skipped_count += 1
+                    continue
+                
+                # Get document nodes via CITED_IN edges
+                doc_nodes = []
+                for k in kriya_nodes:
+                    doc_edges = [
+                        e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                        if e[2].get("relation") == "CITED_IN"
+                    ]
+                    doc_nodes.extend(doc_edges)
+                
+                if not doc_nodes:
+                    print(f"⚠️ No documents")
+                    skipped_count += 1
+                    continue
+                
+                # Query FAISS for nearby context (5 nearest neighbors)
+                context_docs = []
+                for doc_node in doc_nodes[:1]:  # Use first doc as anchor
+                    nearby = self.graph.vector_store.query_nearby(doc_node, k=5)
+                    context_docs.extend(nearby)
+                
+                if not context_docs:
+                    print(f"⚠️ No nearby docs")
+                    skipped_count += 1
+                    continue
+                
+                # Build context from nearby documents
+                context_texts = []
+                for doc_id in context_docs[:5]:
+                    if doc_id in self.graph.graph:
+                        text = self.graph.graph.nodes[doc_id].get("text", "")
+                        if text:
+                            context_texts.append(text)
+                
+                # Use verifier LLM to confirm coreference link
+                target_entity = self._verify_coreference(
+                    pronoun_name, 
+                    context_texts, 
+                    coref_hint, 
+                    coref_context
+                )
+                
+                if target_entity:
+                    # Resolve target entity to canonical form
+                    canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
+                    
+                    # Check if target entity exists in graph
+                    if canonical_target in self.graph.graph:
+                        # Add IS_SAME_AS edge
+                        self.graph.add_edge(pronoun_id, canonical_target, "IS_SAME_AS")
+                        resolved_count += 1
+                        print(f"✅ → '{canonical_target}'")
+                    else:
+                        print(f"⚠️ Target not in graph")
+                        skipped_count += 1
+                else:
+                    print(f"⚠️ No target found")
+                    skipped_count += 1
+            except Exception as e:
+                print(f"❌ Error: {str(e)[:30]}")
+                failed_count += 1
         
-        print(f"   ✅ Resolved {resolved_count} coreferences")
+        print(f"\n   ✅ Coreference resolution complete:")
+        print(f"      Resolved: {resolved_count}")
+        print(f"      Skipped: {skipped_count}")
+        print(f"      Failed: {failed_count}")
     
     def _verify_coreference(self, pronoun: str, context_texts: List[str], 
                            hint: Optional[str], hint_context: str) -> Optional[str]:
@@ -1438,52 +1581,75 @@ What entity does this pronoun refer to?"""
                     metaphor_entities.append(node_id)
                     break
         
-        print(f"   Found {len(metaphor_entities)} potential metaphorical entities")
+        print(f"   📊 Found {len(metaphor_entities)} potential metaphorical entities")
         linked_count = 0
+        skipped_count = 0
+        failed_count = 0
         
-        for metaphor_id in metaphor_entities:
+        for idx, metaphor_id in enumerate(metaphor_entities, 1):
             metaphor_name = self.graph.graph.nodes[metaphor_id].get("canonical_name", "")
+            print(f"      [{idx}/{len(metaphor_entities)}] Linking '{metaphor_name}'...", end=' ', flush=True)
             
-            # Get context via edges
-            kriya_nodes = [
-                e[0] for e in self.graph.graph.in_edges(metaphor_id, data=True)
-            ]
-            
-            if not kriya_nodes:
-                continue
-            
-            # Get document context
-            doc_nodes = []
-            for k in kriya_nodes[:3]:  # Limit to 3 kriyas
-                doc_edges = [
-                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
-                    if e[2].get("relation") == "CITED_IN"
+            try:
+                # Get context via edges
+                kriya_nodes = [
+                    e[0] for e in self.graph.graph.in_edges(metaphor_id, data=True)
                 ]
-                doc_nodes.extend(doc_edges)
-            
-            # Build context
-            context_texts = []
-            for doc_id in doc_nodes[:5]:
-                if doc_id in self.graph.graph:
-                    text = self.graph.graph.nodes[doc_id].get("text", "")
-                    if text:
-                        context_texts.append(text)
-            
-            # Use LLM to find target entity
-            target_entity = self._resolve_metaphor(metaphor_name, context_texts)
-            
-            if target_entity:
-                # Resolve to canonical form
-                canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
                 
-                # Check if target exists and is different from metaphor
-                if canonical_target in self.graph.graph and canonical_target != metaphor_id:
-                    # Add IS_SAME_AS edge
-                    self.graph.add_edge(metaphor_id, canonical_target, "IS_SAME_AS")
-                    linked_count += 1
-                    print(f"      ✓ Linked '{metaphor_name}' → '{canonical_target}'")
+                if not kriya_nodes:
+                    print(f"⚠️ No context")
+                    skipped_count += 1
+                    continue
+                
+                # Get document context
+                doc_nodes = []
+                for k in kriya_nodes[:3]:  # Limit to 3 kriyas
+                    doc_edges = [
+                        e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                        if e[2].get("relation") == "CITED_IN"
+                    ]
+                    doc_nodes.extend(doc_edges)
+                
+                # Build context
+                context_texts = []
+                for doc_id in doc_nodes[:5]:
+                    if doc_id in self.graph.graph:
+                        text = self.graph.graph.nodes[doc_id].get("text", "")
+                        if text:
+                            context_texts.append(text)
+                
+                if not context_texts:
+                    print(f"⚠️ No context texts")
+                    skipped_count += 1
+                    continue
+                
+                # Use LLM to find target entity
+                target_entity = self._resolve_metaphor(metaphor_name, context_texts)
+                
+                if target_entity:
+                    # Resolve to canonical form
+                    canonical_target = self.graph.entity_resolver.resolve_entity(target_entity)
+                    
+                    # Check if target exists and is different from metaphor
+                    if canonical_target in self.graph.graph and canonical_target != metaphor_id:
+                        # Add IS_SAME_AS edge
+                        self.graph.add_edge(metaphor_id, canonical_target, "IS_SAME_AS")
+                        linked_count += 1
+                        print(f"✅ → '{canonical_target}'")
+                    else:
+                        print(f"⚠️ Target not valid")
+                        skipped_count += 1
+                else:
+                    print(f"⚠️ No target found")
+                    skipped_count += 1
+            except Exception as e:
+                print(f"❌ Error: {str(e)[:30]}")
+                failed_count += 1
         
-        print(f"   ✅ Linked {linked_count} metaphorical entities")
+        print(f"\n   ✅ Metaphorical linking complete:")
+        print(f"      Linked: {linked_count}")
+        print(f"      Skipped: {skipped_count}")
+        print(f"      Failed: {failed_count}")
     
     def _resolve_metaphor(self, metaphor: str, context_texts: List[str]) -> Optional[str]:
         """Use LLM to resolve metaphorical reference
@@ -1554,49 +1720,64 @@ What is the actual entity being referred to?"""
             and not self.graph.graph.nodes[n].get("entity_type")  # Not already typed
         ]
         
-        print(f"   Found {len(entity_nodes)} entities to type")
+        print(f"   📊 Found {len(entity_nodes)} entities to type (limiting to 50)")
         typed_count = 0
+        skipped_count = 0
+        failed_count = 0
         
-        for entity_id in entity_nodes[:50]:  # Limit to 50 for performance
+        for idx, entity_id in enumerate(entity_nodes[:50], 1):  # Limit to 50 for performance
             entity_name = self.graph.graph.nodes[entity_id].get("canonical_name", "")
             
-            # Get context via edges
-            kriya_nodes = [
-                e[0] for e in self.graph.graph.in_edges(entity_id, data=True)
-            ]
+            if idx % 5 == 0 or idx == 1:
+                print(f"      [{idx}/50] Typing entities...", end='\r', flush=True)
             
-            if not kriya_nodes:
-                continue
-            
-            # Get document context
-            doc_nodes = []
-            for k in kriya_nodes[:3]:
-                doc_edges = [
-                    e[1] for e in self.graph.graph.out_edges(k, data=True) 
-                    if e[2].get("relation") == "CITED_IN"
+            try:
+                # Get context via edges
+                kriya_nodes = [
+                    e[0] for e in self.graph.graph.in_edges(entity_id, data=True)
                 ]
-                doc_nodes.extend(doc_edges)
-            
-            # Build context
-            context_texts = []
-            for doc_id in doc_nodes[:5]:
-                if doc_id in self.graph.graph:
-                    text = self.graph.graph.nodes[doc_id].get("text", "")
-                    if text:
-                        context_texts.append(text)
-            
-            # Determine entity type
-            entity_type = self._determine_entity_type(entity_name, context_texts)
-            
-            if entity_type:
-                # Add entity_type attribute
-                self.graph.graph.nodes[entity_id]["entity_type"] = entity_type
-                typed_count += 1
                 
-                if typed_count % 10 == 0:
-                    print(f"      Progress: {typed_count} entities typed", end='\r')
+                if not kriya_nodes:
+                    skipped_count += 1
+                    continue
+                
+                # Get document context
+                doc_nodes = []
+                for k in kriya_nodes[:3]:
+                    doc_edges = [
+                        e[1] for e in self.graph.graph.out_edges(k, data=True) 
+                        if e[2].get("relation") == "CITED_IN"
+                    ]
+                    doc_nodes.extend(doc_edges)
+                
+                # Build context
+                context_texts = []
+                for doc_id in doc_nodes[:5]:
+                    if doc_id in self.graph.graph:
+                        text = self.graph.graph.nodes[doc_id].get("text", "")
+                        if text:
+                            context_texts.append(text)
+                
+                if not context_texts:
+                    skipped_count += 1
+                    continue
+                
+                # Determine entity type
+                entity_type = self._determine_entity_type(entity_name, context_texts)
+                
+                if entity_type:
+                    # Add entity_type attribute
+                    self.graph.graph.nodes[entity_id]["entity_type"] = entity_type
+                    typed_count += 1
+                else:
+                    skipped_count += 1
+            except Exception as e:
+                failed_count += 1
         
-        print(f"\n   ✅ Typed {typed_count} entities")
+        print(f"\n   ✅ Entity typing complete:")
+        print(f"      Typed: {typed_count}")
+        print(f"      Skipped: {skipped_count}")
+        print(f"      Failed: {failed_count}")
     
     def _determine_entity_type(self, entity_name: str, context_texts: List[str]) -> Optional[str]:
         """Use LLM to determine entity type
@@ -1667,8 +1848,9 @@ What type is this entity?"""
             if self.graph.graph.nodes[n].get("type") == "Kriya"
         ]
         
-        print(f"   Analyzing {len(kriya_nodes)} Kriyā nodes for causality")
+        print(f"   📊 Analyzing {len(kriya_nodes)} Kriyā nodes for causality")
         causal_count = 0
+        failed_count = 0
         
         # Group Kriyās by document for adjacency analysis
         doc_kriyas = defaultdict(list)
@@ -1703,26 +1885,33 @@ What type is this entity?"""
                 if not text1 or not text2:
                     continue
                 
-                # Check for causality
-                is_causal, direction = self._check_causality(
-                    kriya1, kriya2, text1, text2
-                )
-                
-                if is_causal:
-                    if direction == "forward":
-                        # kriya1 CAUSES kriya2
-                        self.graph.add_edge(kriya1, kriya2, "CAUSES")
-                        causal_count += 1
-                    elif direction == "backward":
-                        # kriya2 CAUSES kriya1
-                        self.graph.add_edge(kriya2, kriya1, "CAUSES")
-                        causal_count += 1
+                try:
+                    # Check for causality
+                    is_causal, direction = self._check_causality(
+                        kriya1, kriya2, text1, text2
+                    )
+                    
+                    if is_causal:
+                        if direction == "forward":
+                            # kriya1 CAUSES kriya2
+                            self.graph.add_edge(kriya1, kriya2, "CAUSES")
+                            causal_count += 1
+                        elif direction == "backward":
+                            # kriya2 CAUSES kriya1
+                            self.graph.add_edge(kriya2, kriya1, "CAUSES")
+                            causal_count += 1
+                except Exception as e:
+                    failed_count += 1
                 
                 checked += 1
                 if checked % 20 == 0:
-                    print(f"      Progress: {checked} pairs checked, {causal_count} causal links found", end='\r')
+                    progress_pct = (checked / sum(max(0, len(k)-1) for k in doc_kriyas.values())) * 100 if doc_kriyas else 0
+                    print(f"      Progress: {checked} pairs checked ({progress_pct:.1f}%), {causal_count} causal links, {failed_count} failed", end='\r', flush=True)
         
-        print(f"\n   ✅ Found {causal_count} causal relationships")
+        print(f"\n   ✅ Causal relationship detection complete:")
+        print(f"      Found: {causal_count} causal links")
+        print(f"      Checked: {checked} pairs")
+        print(f"      Failed: {failed_count}")
     
     def _check_causality(self, kriya1_id: str, kriya2_id: str, 
                         text1: str, text2: str) -> Tuple[bool, Optional[str]]:
@@ -1789,7 +1978,7 @@ print("✅ IngestionPipeline class defined")
 
 
 # ============================================================================
-# CELL 8.5: Query Pipeline Implementation
+# CELL 9: Query Pipeline Class Definition
 # ============================================================================
 class QueryPipeline:
     """Query pipeline with GSV-Retry decomposition and graph-based execution"""
@@ -1815,65 +2004,115 @@ class QueryPipeline:
             question: User question
         
         Returns:
-            Dict with answer, citations, status
+            Dict with answer, citations, reasoning_trace, status
         """
         print(f"\n{'='*80}")
-        print(f"QUERY: {question}")
+        print(f"🔍 QUERY: {question}")
         print(f"{'='*80}")
         
-        # Step 1: Decompose with GSV-Retry
-        print("\n[Step 1] Decomposing query with GSV-Retry...")
-        golden_plan = self.gsv_engine.extract_with_retry(
-            text=question,
-            extraction_type="query",
-            line_ref="query"
-        )
+        reasoning_trace = []
         
-        if not golden_plan:
+        # Step 1: Decompose with GSV-Retry
+        print("\n📋 [Step 1/3] Decomposing query with GSV-Retry...")
+        try:
+            golden_plan = self.gsv_engine.extract_with_retry(
+                text=question,
+                extraction_type="query",
+                line_ref="query"
+            )
+            
+            if not golden_plan:
+                print("   ❌ Failed to decompose query")
+                return {
+                    "question": question,
+                    "answer": "Failed to decompose query after multiple attempts. Please try rephrasing your question.",
+                    "citations": [],
+                    "reasoning_trace": [],
+                    "status": "ERROR"
+                }
+            
+            print(f"   ✅ Golden Plan generated")
+            print(f"   📝 Plan: {json.dumps(golden_plan['data'], indent=2)[:200]}...")
+        except Exception as e:
+            print(f"   ❌ Error during decomposition: {str(e)[:50]}")
             return {
                 "question": question,
-                "answer": "Failed to decompose query after multiple attempts",
+                "answer": f"Error during query decomposition: {str(e)[:100]}",
                 "citations": [],
+                "reasoning_trace": [],
                 "status": "ERROR"
             }
         
-        print(f"  ✓ Golden Plan: {json.dumps(golden_plan['data'], indent=2)}")
-        
-        # Step 2: Execute graph traversal
-        print("\n[Step 2] Executing graph traversal...")
-        ground_truth_docs = self._execute_traversal(golden_plan["data"])
-        
-        if not ground_truth_docs:
+        # Step 2: Execute graph traversal with reasoning trace
+        print("\n🔎 [Step 2/3] Executing graph traversal...")
+        try:
+            ground_truth_docs, reasoning_trace = self._execute_traversal(golden_plan["data"])
+            
+            if not ground_truth_docs:
+                print("   ⚠️ No matching documents found")
+                return {
+                    "question": question,
+                    "answer": "No answer found in the knowledge graph. The information may not be available in the ingested documents.",
+                    "citations": [],
+                    "reasoning_trace": reasoning_trace,
+                    "status": "NO_MATCH"
+                }
+            
+            print(f"   ✅ Found {len(ground_truth_docs)} relevant document(s)")
+            
+            # Print reasoning trace
+            if reasoning_trace:
+                print(f"\n   📊 Reasoning Trace:")
+                for step in reasoning_trace:
+                    print(f"      Step {step.step_number}: {step.description}")
+                    print(f"         Kriyā: {step.kriya_matched}")
+                    print(f"         Kārakas: {step.karakas_matched}")
+                    print(f"         Citations: {len(step.citations)} document(s)")
+        except Exception as e:
+            print(f"   ❌ Error during traversal: {str(e)[:50]}")
             return {
                 "question": question,
-                "answer": "No answer found in knowledge graph",
+                "answer": f"Error during graph traversal: {str(e)[:100]}",
                 "citations": [],
-                "status": "NO_MATCH"
+                "reasoning_trace": [],
+                "status": "ERROR"
             }
         
-        print(f"  ✓ Found {len(ground_truth_docs)} relevant document(s)")
-        
         # Step 3: Generate grounded answer
-        print("\n[Step 3] Generating grounded answer...")
-        return self._generate_answer(question, ground_truth_docs)
+        print("\n💬 [Step 3/3] Generating grounded answer...")
+        try:
+            result = self._generate_answer(question, ground_truth_docs)
+            result["reasoning_trace"] = reasoning_trace
+            print(f"   ✅ Answer generated successfully")
+            return result
+        except Exception as e:
+            print(f"   ❌ Error during answer generation: {str(e)[:50]}")
+            return {
+                "question": question,
+                "answer": f"Error generating answer: {str(e)[:100]}",
+                "citations": ground_truth_docs,
+                "reasoning_trace": reasoning_trace,
+                "status": "ERROR"
+            }
     
-    def _execute_traversal(self, query_plan: Dict) -> List[Dict]:
+    def _execute_traversal(self, query_plan: Dict) -> Tuple[List[Dict], List[ReasoningStep]]:
         """Translate plan to NetworkX operations and execute
         
         Args:
             query_plan: Query plan from GSV-Retry
         
         Returns:
-            List of document dicts with text and citations
+            Tuple of (document dicts, reasoning steps)
         """
         all_doc_nodes = []
+        reasoning_trace = []
         steps = query_plan.get("steps", [])
         
         if not steps:
             # Fallback: treat as single step
             steps = [query_plan]
         
-        for step in steps:
+        for step_num, step in enumerate(steps, 1):
             # Find matching Kriyā nodes
             kriya_nodes = self._find_kriyas(
                 verb=step.get("verb"),
@@ -1887,17 +2126,56 @@ class QueryPipeline:
                 kriya_nodes = self._expand_causal_chain(kriya_nodes)
                 print(f"    Expanded to {len(kriya_nodes)} Kriyā(s) via causal chain")
             
-            # Get cited documents
+            # Get cited documents for this step
+            step_doc_nodes = []
             for kriya_id in kriya_nodes:
                 doc_edges = [
                     e[1] for e in self.graph.graph.out_edges(kriya_id, data=True)
                     if e[2].get("relation") == "CITED_IN"
                 ]
+                step_doc_nodes.extend(doc_edges)
                 all_doc_nodes.extend(doc_edges)
+            
+            # Create reasoning step
+            if kriya_nodes:
+                # Get first kriya for step tracking
+                first_kriya = kriya_nodes[0]
+                kriya_attrs = self.graph.graph.nodes[first_kriya]
+                
+                # Get karakas for this kriya
+                karakas_matched = {}
+                for edge in self.graph.graph.out_edges(first_kriya, data=True):
+                    relation = edge[2].get("relation", "")
+                    if relation.startswith("HAS_") or relation.startswith("USES_") or relation.startswith("TARGETS_") or relation.startswith("FROM_") or relation in ["LOCATED_IN", "OCCURS_AT"]:
+                        target_node = edge[1]
+                        if self.graph.graph.nodes[target_node].get("type") == "Entity":
+                            karakas_matched[relation] = self.graph.graph.nodes[target_node].get("canonical_name", "")
+                
+                # Get citations for this step
+                step_citations = []
+                for doc_node in set(step_doc_nodes):
+                    if doc_node in self.graph.graph and self.graph.graph.nodes[doc_node].get("type") == "Document":
+                        doc_attrs = self.graph.graph.nodes[doc_node]
+                        step_citations.append(Citation(
+                            document_id=doc_attrs["doc_id"],
+                            line_number=doc_attrs["line_number"],
+                            original_text=doc_attrs["text"]
+                        ))
+                
+                # Create reasoning step
+                reasoning_step = ReasoningStep(
+                    step_number=step_num,
+                    description=f"Match Kriyā '{step.get('verb', 'any')}' with kārakas {step.get('karakas', {})}",
+                    kriya_matched=kriya_attrs.get("verb", ""),
+                    karakas_matched=karakas_matched,
+                    citations=step_citations,
+                    result=f"Found {len(kriya_nodes)} Kriyā(s), {len(step_citations)} citation(s)"
+                )
+                reasoning_trace.append(reasoning_step)
         
         # Retrieve text from unique Document nodes
         unique_docs = list(set(all_doc_nodes))
-        return [
+        doc_list = [
             {
                 "doc_id": self.graph.graph.nodes[d]["doc_id"],
                 "line_number": self.graph.graph.nodes[d]["line_number"],
@@ -1906,6 +2184,8 @@ class QueryPipeline:
             for d in unique_docs
             if d in self.graph.graph and self.graph.graph.nodes[d].get("type") == "Document"
         ]
+        
+        return doc_list, reasoning_trace
     
     def _find_kriyas(self, verb: Optional[str], karaka_constraints: Dict) -> List[str]:
         """Find Kriyā nodes with optimized entity-first traversal
@@ -2086,3 +2366,213 @@ Natural Answer:"""
 
 print("✅ QueryPipeline class defined")
 
+
+
+# ============================================================================
+# CELL 10: Ingestion Pipeline Step 1 - Embed and Store Documents
+# ============================================================================
+print("\n" + "="*80)
+print("CELL 10: INGESTION STEP 1 - EMBED AND STORE")
+print("="*80)
+
+# Initialize graph
+if 'karaka_graph' not in globals():
+    print("Initializing KarakaGraphV2...")
+    karaka_graph = KarakaGraphV2(embedding_model, embedding_tokenizer)
+    print("✅ Graph initialized")
+else:
+    print("✅ Graph already initialized")
+
+# Initialize GSV-Retry Engine
+if 'gsv_engine' not in globals():
+    print("Initializing GSVRetryEngine...")
+    gsv_engine = GSVRetryEngine(
+        model=llm_model,
+        tokenizer=tokenizer,
+        prompts=PROMPTS,
+        max_retries=5
+    )
+    print("✅ GSV-Retry Engine initialized")
+else:
+    print("✅ GSV-Retry Engine already initialized")
+
+# Initialize Ingestion Pipeline
+if 'ingestion_pipeline' not in globals():
+    print("Initializing IngestionPipeline...")
+    ingestion_pipeline = IngestionPipeline(
+        graph=karaka_graph,
+        gsv_engine=gsv_engine,
+        embedding_model=embedding_model,
+        embedding_tokenizer=embedding_tokenizer
+    )
+    print("✅ Ingestion Pipeline initialized")
+else:
+    print("✅ Ingestion Pipeline already initialized")
+
+# Load and embed documents (Step 1 only)
+print("\n" + "="*80)
+print("📄 STEP 1: LOADING AND EMBEDDING DOCUMENTS")
+print("="*80)
+
+docs_folder = "./data"  # Change this to your documents folder
+print(f"\n📂 Document folder: {docs_folder}")
+
+refined_docs = ingestion_pipeline._load_documents(docs_folder)
+
+if refined_docs:
+    print(f"   ✅ Loaded {len(refined_docs)} document(s)")
+    ingestion_pipeline._embed_and_store(refined_docs)
+    print(f"\n✅ Step 1 complete: {karaka_graph.vector_store.size()} documents embedded in FAISS")
+else:
+    print("❌ No documents loaded - check folder path and file formats (.txt, .md)")
+
+
+# ============================================================================
+# CELL 11: Ingestion Pipeline Step 2 - GSV-Retry Extraction
+# ============================================================================
+print("\n" + "="*80)
+print("CELL 11: INGESTION STEP 2 - GSV-RETRY EXTRACTION")
+print("="*80)
+
+# Extract Kriyās with GSV-Retry
+if 'refined_docs' in globals() and refined_docs:
+    print("\n🔍 STEP 2: EXTRACTING KRIYĀS WITH GSV-RETRY")
+    print("="*80)
+    ingestion_pipeline._extract_kriyas(refined_docs)
+    
+    entity_count = len([n for n in karaka_graph.graph.nodes() if karaka_graph.graph.nodes[n].get('type') == 'Entity'])
+    
+    print(f"\n✅ Step 2 complete - Extraction finished")
+    print(f"\n📊 Current Graph State:")
+    print(f"   Kriyās: {len(karaka_graph.kriyas)}")
+    print(f"   Entities: {entity_count}")
+    print(f"   Edges: {karaka_graph.graph.number_of_edges()}")
+    print(f"   Success Rate: {ingestion_pipeline.stats['successful_extractions']}/{ingestion_pipeline.stats['total_lines']} ({ingestion_pipeline.stats['successful_extractions']/ingestion_pipeline.stats['total_lines']*100:.1f}%)")
+else:
+    print("❌ No documents to process. Run CELL 8 first.")
+
+
+# ============================================================================
+# CELL 12: Ingestion Pipeline Step 3 - Post-Processing
+# ============================================================================
+print("\n" + "="*80)
+print("CELL 12: INGESTION STEP 3 - POST-PROCESSING")
+print("="*80)
+
+# Run post-processing
+if 'karaka_graph' in globals() and len(karaka_graph.kriyas) > 0:
+    print("\n🔧 STEP 3: POST-PROCESSING")
+    print("="*80)
+    ingestion_pipeline.run_post_processing()
+    
+    # Print final statistics
+    ingestion_pipeline._print_statistics()
+    
+    # Save graph
+    print(f"\n💾 Saving graph to disk...")
+    try:
+        karaka_graph.save_to_file(DB_FILE)
+        print(f"   ✅ Graph saved to {DB_FILE}")
+        karaka_graph.export_visualization(GRAPH_VIZ_FILE)
+        print(f"   ✅ Visualization exported to {GRAPH_VIZ_FILE}")
+    except Exception as e:
+        print(f"   ⚠️ Save failed: {str(e)[:50]}")
+    
+    print(f"\n{'='*80}")
+    print(f"✅ INGESTION COMPLETE - All steps finished successfully!")
+    print(f"{'='*80}")
+else:
+    print("❌ No graph to post-process. Run CELL 10 and 11 first.")
+
+
+# ============================================================================
+# CELL 13: Initialize Query Pipeline
+# ============================================================================
+print("\n" + "="*80)
+print("CELL 13: INITIALIZE QUERY PIPELINE")
+print("="*80)
+
+# Initialize Query Pipeline
+if 'query_pipeline' not in globals():
+    if 'karaka_graph' in globals() and 'gsv_engine' in globals():
+        print("Initializing QueryPipeline...")
+        query_pipeline = QueryPipeline(
+            graph=karaka_graph,
+            gsv_engine=gsv_engine,
+            model=llm_model,
+            tokenizer=tokenizer
+        )
+        print("✅ Query Pipeline initialized")
+    else:
+        print("❌ Graph or GSV-Engine not initialized. Run CELL 10-12 first.")
+else:
+    print("✅ Query Pipeline already initialized")
+
+
+# ============================================================================
+# CELL 14: Execute Queries with QueryPipeline
+# ============================================================================
+print("\n" + "="*80)
+print("CELL 14: EXECUTE QUERIES")
+print("="*80)
+
+# Test queries
+test_queries = [
+    "Who is Rama?",
+    "What did Rama do?",
+    "Where did the battle take place?",
+    "What caused the war?"
+]
+
+if 'query_pipeline' in globals():
+    print("\n🔍 RUNNING TEST QUERIES")
+    print("="*80)
+    print(f"Total queries: {len(test_queries)}\n")
+    
+    query_results = []
+    successful_queries = 0
+    failed_queries = 0
+    
+    for i, question in enumerate(test_queries, 1):
+        print(f"\n{'='*80}")
+        print(f"📋 Query {i}/{len(test_queries)}")
+        print(f"{'='*80}")
+        
+        try:
+            result = query_pipeline.answer_query(question)
+            query_results.append(result)
+            
+            print(f"\n📝 ANSWER:")
+            print(f"{result['answer']}")
+            
+            if result['citations']:
+                print(f"\n📚 CITATIONS ({len(result['citations'])}):")
+                for idx, citation in enumerate(result['citations'][:5], 1):  # Show first 5
+                    print(f"  [{idx}] {citation['doc_id']}, Line {citation['line_number']}: {citation['text'][:80]}...")
+                if len(result['citations']) > 5:
+                    print(f"  ... and {len(result['citations']) - 5} more")
+            
+            if result['status'] in ['GROUNDED', 'NO_MATCH']:
+                print(f"\n✅ Status: {result['status']}")
+                successful_queries += 1
+            else:
+                print(f"\n⚠️ Status: {result['status']}")
+                failed_queries += 1
+        except Exception as e:
+            print(f"\n❌ Query failed with error: {str(e)[:100]}")
+            failed_queries += 1
+    
+    # Summary
+    print(f"\n{'='*80}")
+    print(f"📊 QUERY EXECUTION SUMMARY")
+    print(f"{'='*80}")
+    print(f"Total queries: {len(test_queries)}")
+    print(f"Successful: {successful_queries}")
+    print(f"Failed: {failed_queries}")
+    print(f"Success rate: {successful_queries/len(test_queries)*100:.1f}%")
+else:
+    print("❌ Query Pipeline not initialized. Run CELL 13 first.")
+
+print("\n" + "="*80)
+print("ALL CELLS COMPLETE")
+print("="*80)
