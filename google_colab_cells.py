@@ -1789,379 +1789,300 @@ print("✅ IngestionPipeline class defined")
 
 
 # ============================================================================
-# CELL 8: INGESTION STEP 1 - Load & Refine Documents
+# CELL 8.5: Query Pipeline Implementation
 # ============================================================================
-def load_and_refine_documents(docs_folder: str = "./test_documents") -> Dict[str, List[str]]:
-    """
-    Step 1: Load documents and split into sentences
-    Returns: {doc_id: [sentence1, sentence2, ...]}
-    """
-    if not os.path.exists(docs_folder):
-        print(f"❌ ERROR: Document folder '{docs_folder}' not found!")
-        return {}
+class QueryPipeline:
+    """Query pipeline with GSV-Retry decomposition and graph-based execution"""
     
-    text_files = list(Path(docs_folder).glob("*.txt")) + list(Path(docs_folder).glob("*.md"))
-    if not text_files:
-        print(f"❌ ERROR: No .txt or .md files found in '{docs_folder}'")
-        return {}
-    
-    print(f"\n{'='*80}")
-    print(f"INGESTION STEP 1: Loading & Refining Documents")
-    print(f"{'='*80}")
-    print(f"Found {len(text_files)} document(s)")
-    
-    refined_docs = {}
-    
-    for filepath in text_files:
-        doc_path = Path(filepath)
-        doc_id = doc_path.stem
+    def __init__(self, graph: KarakaGraphV2, gsv_engine: GSVRetryEngine, model, tokenizer):
+        """Initialize query pipeline
         
-        print(f"\n📄 Processing: {doc_path.name}")
+        Args:
+            graph: KarakaGraphV2 instance
+            gsv_engine: GSVRetryEngine for query decomposition
+            model: LLM model
+            tokenizer: Tokenizer
+        """
+        self.graph = graph
+        self.gsv_engine = gsv_engine
+        self.model = model
+        self.tokenizer = tokenizer
+    
+    def answer_query(self, question: str) -> Dict:
+        """Main query orchestrator
         
-        with open(filepath, 'r', encoding='utf-8') as f:
-            lines = [line.strip() for line in f.readlines() if line.strip()]
+        Args:
+            question: User question
         
-        refined_docs[doc_id] = lines
-        print(f"   ✓ Loaded {len(lines)} line(s)")
-    
-    # Save refined documents
-    with open("refined_documents.json", 'w') as f:
-        json.dump(refined_docs, f, indent=2, ensure_ascii=False)
-    
-    print(f"\n✅ Refined documents saved to: refined_documents.json")
-    return refined_docs
-
-# Execute Step 1
-refined_docs = load_and_refine_documents()
-
-
-# ============================================================================
-# CELL 9: INGESTION STEP 2 - Extract Kārakas from Sentences
-# ============================================================================
-def extract_karakas_from_sentence(sentence: str, model, tokenizer) -> List[Dict]:
-    """
-    Isolated LLM call to extract Kārakas from a single sentence
-    Each call is a fresh session
-    """
-    system_prompt = """You are a semantic role labeling expert using Pāṇinian Kāraka framework.
-Extract ALL verbs and their semantic roles. Use ONLY these Kāraka types when applicable:
-
-KARTA - Agent (who does)
-KARMA - Patient (what is affected)
-KARANA - Instrument (using what)
-SAMPRADANA - Recipient (to whom)
-APADANA - Source (from where/whom)
-ADHIKARANA - Location/Time (where/when)
-
-Return JSON array ONLY:
-[{"verb": "base_form", "karakas": {"KARTA": "entity", ...}}]
-
-Rules:
-- Use base verb forms (give not gave)
-- Extract entities exactly as mentioned
-- Keep pronouns as-is
-- Omit absent roles"""
-
-    user_prompt = f"Sentence: {sentence}\nJSON:"
-    
-    response = call_llm_isolated(system_prompt, user_prompt, model, tokenizer, max_tokens=300)
-    result = parse_json_response(response)
-    
-    return result if isinstance(result, list) else []
-
-def ingest_karakas_to_graph(refined_docs: Dict[str, List[str]], graph: KarakaGraph, model, tokenizer):
-    """
-    Step 2: Extract Kārakas from each sentence and add to graph
-    """
-    print(f"\n{'='*80}")
-    print(f"INGESTION STEP 2: Extracting Kārakas & Building Graph")
-    print(f"{'='*80}")
-    
-    for doc_id, lines in refined_docs.items():
-        print(f"\n{'─'*80}")
-        print(f"📄 Document: {doc_id}")
-        print(f"{'─'*80}")
+        Returns:
+            Dict with answer, citations, status
+        """
+        print(f"\n{'='*80}")
+        print(f"QUERY: {question}")
+        print(f"{'='*80}")
         
-        graph.add_document(doc_id, {
-            'doc_id': doc_id,
-            'total_lines': len(lines),
-            'ingestion_time': datetime.now().isoformat()
-        })
+        # Step 1: Decompose with GSV-Retry
+        print("\n[Step 1] Decomposing query with GSV-Retry...")
+        golden_plan = self.gsv_engine.extract_with_retry(
+            text=question,
+            extraction_type="query",
+            line_ref="query"
+        )
         
-        for line_num, text in enumerate(lines, start=1):
-            print(f"\n   Line {line_num}: \"{text}\"")
+        if not golden_plan:
+            return {
+                "question": question,
+                "answer": "Failed to decompose query after multiple attempts",
+                "citations": [],
+                "status": "ERROR"
+            }
+        
+        print(f"  ✓ Golden Plan: {json.dumps(golden_plan['data'], indent=2)}")
+        
+        # Step 2: Execute graph traversal
+        print("\n[Step 2] Executing graph traversal...")
+        ground_truth_docs = self._execute_traversal(golden_plan["data"])
+        
+        if not ground_truth_docs:
+            return {
+                "question": question,
+                "answer": "No answer found in knowledge graph",
+                "citations": [],
+                "status": "NO_MATCH"
+            }
+        
+        print(f"  ✓ Found {len(ground_truth_docs)} relevant document(s)")
+        
+        # Step 3: Generate grounded answer
+        print("\n[Step 3] Generating grounded answer...")
+        return self._generate_answer(question, ground_truth_docs)
+    
+    def _execute_traversal(self, query_plan: Dict) -> List[Dict]:
+        """Translate plan to NetworkX operations and execute
+        
+        Args:
+            query_plan: Query plan from GSV-Retry
+        
+        Returns:
+            List of document dicts with text and citations
+        """
+        all_doc_nodes = []
+        steps = query_plan.get("steps", [])
+        
+        if not steps:
+            # Fallback: treat as single step
+            steps = [query_plan]
+        
+        for step in steps:
+            # Find matching Kriyā nodes
+            kriya_nodes = self._find_kriyas(
+                verb=step.get("verb"),
+                karaka_constraints=step.get("karakas", {})
+            )
             
-            # Isolated LLM call - fresh session
-            kriyas_extracted = extract_karakas_from_sentence(text, model, tokenizer)
+            print(f"    Found {len(kriya_nodes)} matching Kriyā(s)")
             
-            if not kriyas_extracted:
-                print(f"      ⚠️ No kriyas extracted")
+            # Multi-hop: Follow CAUSES, IS_SAME_AS chains if requested
+            if step.get("follow_causes"):
+                kriya_nodes = self._expand_causal_chain(kriya_nodes)
+                print(f"    Expanded to {len(kriya_nodes)} Kriyā(s) via causal chain")
+            
+            # Get cited documents
+            for kriya_id in kriya_nodes:
+                doc_edges = [
+                    e[1] for e in self.graph.graph.out_edges(kriya_id, data=True)
+                    if e[2].get("relation") == "CITED_IN"
+                ]
+                all_doc_nodes.extend(doc_edges)
+        
+        # Retrieve text from unique Document nodes
+        unique_docs = list(set(all_doc_nodes))
+        return [
+            {
+                "doc_id": self.graph.graph.nodes[d]["doc_id"],
+                "line_number": self.graph.graph.nodes[d]["line_number"],
+                "text": self.graph.graph.nodes[d]["text"]
+            }
+            for d in unique_docs
+            if d in self.graph.graph and self.graph.graph.nodes[d].get("type") == "Document"
+        ]
+    
+    def _find_kriyas(self, verb: Optional[str], karaka_constraints: Dict) -> List[str]:
+        """Find Kriyā nodes with optimized entity-first traversal
+        
+        Args:
+            verb: Verb to match (optional)
+            karaka_constraints: Dict of kāraka constraints
+        
+        Returns:
+            List of matching Kriyā node IDs
+        """
+        # OPTIMIZATION: Start from KARTA entity if available (O(k) not O(N))
+        if "KARTA" in karaka_constraints and karaka_constraints["KARTA"]:
+            karta_mention = karaka_constraints["KARTA"]
+            canonical = self.graph.entity_resolver.resolve_entity(karta_mention)
+            
+            # Get all Kriyā nodes where this entity is KARTĀ (traverse FROM entity via incoming edges)
+            if canonical in self.graph.graph:
+                candidates = [
+                    e[0] for e in self.graph.graph.in_edges(canonical, data=True) 
+                    if e[2].get("relation") == "HAS_KARTĀ"
+                ]
+            else:
+                candidates = []
+        elif verb:
+            # Fallback: Filter by verb
+            candidates = [
+                n for n in self.graph.graph.nodes() 
+                if self.graph.graph.nodes[n].get("type") == "Kriya" 
+                and self.graph.graph.nodes[n].get("verb") == verb
+            ]
+        else:
+            # Last resort: all Kriyā nodes
+            candidates = [
+                n for n in self.graph.graph.nodes() 
+                if self.graph.graph.nodes[n].get("type") == "Kriya"
+            ]
+        
+        # Apply remaining kāraka constraints
+        results = []
+        for kriya_id in candidates:
+            match = True
+            
+            # Check verb if not already filtered
+            if verb and self.graph.graph.nodes[kriya_id].get("verb") != verb:
                 continue
             
-            for kriya_data in kriyas_extracted:
-                verb = kriya_data.get('verb', '').strip()
-                karakas = kriya_data.get('karakas', {})
-                if not verb:
+            # Check other kāraka constraints
+            for karaka_type, required_entity in karaka_constraints.items():
+                if not required_entity or karaka_type == "KARTA":  # Already filtered
                     continue
                 
-                kriya_id = graph.add_kriya(
-                    verb=verb,
-                    karakas=karakas,
-                    doc_id=doc_id,
-                    line_number=line_num,
-                    original_text=text
-                )
-                print(f"      ✓ Kriya: {verb} | {karakas} → {kriya_id}")
-    
-    graph.save_to_file(DB_FILE)
-    graph.export_visualization(GRAPH_VIZ_FILE)
-    
-    stats = graph.get_stats()
-    print(f"\n{'='*80}")
-    print(f"GRAPH STATISTICS")
-    print(f"{'='*80}")
-    for key, value in stats.items():
-        print(f"  {key}: {value}")
-    
-    print(f"\n✅ Graph saved to: {DB_FILE}")
-    print(f"✅ Visualization saved to: {GRAPH_VIZ_FILE}")
-
-# Execute Step 2
-karaka_graph = KarakaGraph(embedding_model, embedding_tokenizer)
-karaka_graph.load_from_file(DB_FILE)
-ingest_karakas_to_graph(refined_docs, karaka_graph, llm_model, tokenizer)
-
-
-# ============================================================================
-# CELL 10: QUERY STEP 1 - Decompose Query into Kārakas
-# ============================================================================
-def decompose_query_to_karakas(question: str, model, tokenizer) -> Optional[Dict]:
-    """
-    Isolated LLM call to break query into Kāraka search plan
-    Fresh session - no history
-    """
-    system_prompt = """Analyze the question and create a Kāraka-based search plan.
-
-Return JSON object with "steps" array:
-{
-  "steps": [
-    {
-      "goal": "description",
-      "verb": "verb_to_find or null",
-      "karakas": {"KARTA": "entity or null", "KARMA": "entity or null", ...},
-      "extract": "which Kāraka role contains the answer"
-    }
-  ]
-}
-
-Example:
-Q: "What weapon did Rama use to kill Ravana?"
-A: {"steps": [{"goal": "Find killing action", "verb": "kill", "karakas": {"KARTA": "Rama", "KARMA": "Ravana", "KARANA": null}, "extract": "KARANA"}]}"""
-
-    user_prompt = f"Question: {question}\nJSON:"
-    
-    response = call_llm_isolated(system_prompt, user_prompt, model, tokenizer, 400)
-    result = parse_json_response(response)
-    
-    # Handle if LLM returns array instead of object
-    if isinstance(result, list):
-        return {"steps": result}
-    return result
-
-print("✅ Query decomposition function loaded")
-
-
-# ============================================================================
-# CELL 11: QUERY STEP 2 - Execute Search & Extract References
-# ============================================================================
-def execute_search_and_extract(search_plan: Dict, graph: KarakaGraph) -> Dict:
-    """
-    Step 2: Execute graph search and extract nodes with references
-    Returns: answer, citations, reasoning steps
-    """
-    if not search_plan or not isinstance(search_plan, dict) or 'steps' not in search_plan:
-        if isinstance(search_plan, list):
-            search_plan = {"steps": search_plan}
-        else:
-            return {
-                'answer': None,
-                'reasoning': [],
-                'citations': [],
-                'status': 'FAILED_TO_PARSE_QUERY'
-            }
-    
-    reasoning_steps = []
-    steps = search_plan.get('steps', [])
-    
-    for i, step_info in enumerate(steps, 1):
-        verb = step_info.get('verb')
-        karakas = step_info.get('karakas', {})
-        extract_role = step_info.get('extract')
-        
-        constraints = {k: v for k, v in karakas.items() if v}
-        matching_kriyas = graph.find_kriyas(verb=verb, **constraints)
-        
-        print(f"  Step {i}: Found {len(matching_kriyas)} matching kriya(s)")
-        
-        if not matching_kriyas:
-            continue
-        
-        for kriya_id in matching_kriyas:
-            kriya = graph.kriyas[kriya_id]
-            answer = kriya['karakas'].get(extract_role)
-            
-            if answer:
-                citation = graph.get_citation(kriya_id)
-                reasoning_steps.append(ReasoningStep(
-                    step_number=i,
-                    description=step_info.get('goal', ''),
-                    kriya_matched=kriya_id,
-                    karakas_matched=kriya['karakas'],
-                    citations=[citation],
-                    result=answer
-                ))
+                # Resolve entity and check edge (FROM Kriyā TO Entity)
+                canonical = self.graph.entity_resolver.resolve_entity(required_entity)
+                relation = self._map_karaka_to_relation(karaka_type)
                 
-                return {
-                    'answer': answer,
-                    'reasoning': [asdict(step) for step in reasoning_steps],
-                    'citations': [asdict(citation)],
-                    'status': 'GROUNDED'
-                }
+                # Check if edge exists (outgoing from Kriyā)
+                edges = [
+                    e for e in self.graph.graph.out_edges(kriya_id, data=True) 
+                    if e[1] == canonical and e[2].get("relation") == relation
+                ]
+                if not edges:
+                    match = False
+                    break
+            
+            if match:
+                results.append(kriya_id)
+        
+        return results
     
-    return {
-        'answer': None,
-        'reasoning': [asdict(step) for step in reasoning_steps],
-        'citations': [],
-        'status': 'NO_MATCH'
-    }
-
-print("✅ Search execution function loaded")
-
-
-# ============================================================================
-# CELL 12: QUERY STEP 3 - Form Answer with Citations
-# ============================================================================
-def form_answer_with_citations(question: str, search_result: Dict, model, tokenizer) -> Dict:
-    """
-    Step 3: Use LLM to form natural answer with citations
-    Isolated session - fresh call
-    """
-    if not search_result['answer']:
-        return {
-            'question': question,
-            'answer': "I cannot find an answer in the knowledge graph.",
-            'citations': [],
-            'reasoning': search_result['reasoning'],
-            'status': search_result['status']
+    def _map_karaka_to_relation(self, karaka_type: str) -> str:
+        """Map kāraka type to graph relation
+        
+        Args:
+            karaka_type: Kāraka type
+        
+        Returns:
+            Graph relation name
+        """
+        mapping = {
+            "KARTA": "HAS_KARTĀ",
+            "KARMA": "HAS_KARMA",
+            "KARANA": "USES_KARANA",
+            "SAMPRADANA": "TARGETS_SAMPRADĀNA",
+            "APADANA": "FROM_APĀDĀNA",
+            "ADHIKARANA": "LOCATED_IN",  # Default to spatial
+            "ADHIKARANA_SPATIAL": "LOCATED_IN",
+            "ADHIKARANA_TEMPORAL": "OCCURS_AT"
         }
+        return mapping.get(karaka_type, "UNKNOWN")
     
-    # Build context from citations
-    context_parts = []
-    for cite in search_result['citations']:
-        context_parts.append(f"[{cite['document_id']}, Line {cite['line_number']}]: \"{cite['original_text']}\"")
+    def _expand_causal_chain(self, kriya_nodes: List[str]) -> List[str]:
+        """Follow CAUSES edges to get full causal chain
+        
+        Args:
+            kriya_nodes: Initial Kriyā nodes
+        
+        Returns:
+            Expanded list including causal chain
+        """
+        expanded = set(kriya_nodes)
+        
+        for kriya_id in kriya_nodes:
+            # Follow CAUSES edges (both directions)
+            # Caused by (incoming CAUSES edges)
+            caused_by = [
+                e[0] for e in self.graph.graph.in_edges(kriya_id, data=True) 
+                if e[2].get("relation") == "CAUSES"
+            ]
+            # Causes (outgoing CAUSES edges)
+            causes = [
+                e[1] for e in self.graph.graph.out_edges(kriya_id, data=True) 
+                if e[2].get("relation") == "CAUSES"
+            ]
+            expanded.update(caused_by)
+            expanded.update(causes)
+        
+        return list(expanded)
     
-    context = "\n".join(context_parts)
-    extracted_answer = search_result['answer']
-    
-    system_prompt = """You are a precise answer generator. Form a natural answer using ONLY the provided information.
+    def _generate_answer(self, question: str, ground_truth_docs: List[Dict]) -> Dict:
+        """Final LLM call with grounded context
+        
+        Args:
+            question: User question
+            ground_truth_docs: List of document dicts
+        
+        Returns:
+            Dict with answer and citations
+        """
+        # Sort by doc_id and line_number for narrative coherence
+        sorted_docs = sorted(ground_truth_docs, key=lambda d: (d["doc_id"], d["line_number"]))
+        
+        # Build context
+        context = "\n".join([
+            f"[{d['doc_id']}, Line {d['line_number']}]: {d['text']}"
+            for d in sorted_docs
+        ])
+        
+        # Single isolated LLM call
+        system_prompt = """You are a precise answer generator. Form a natural answer using ONLY the provided context.
 
 Rules:
-- Use the extracted answer and context
+- Use only information from the context
 - Keep it concise
-- Do not add information not in the context
-- Cite the source"""
+- Cite sources
+- Do not add information not in the context"""
+        
+        user_prompt = f"""Question: {question}
 
-    user_prompt = f"""Question: {question}
-Extracted Answer: {extracted_answer}
 Context:
 {context}
 
 Natural Answer:"""
-    
-    response = call_llm_isolated(system_prompt, user_prompt, model, tokenizer, 200)
-    
-    return {
-        'question': question,
-        'answer': response,
-        'raw_answer': extracted_answer,
-        'citations': search_result['citations'],
-        'reasoning': search_result['reasoning'],
-        'status': search_result['status']
-    }
+        
+        try:
+            answer = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                max_tokens=200
+            )
+            
+            return {
+                "question": question,
+                "answer": answer,
+                "citations": sorted_docs,
+                "status": "GROUNDED"
+            }
+        except Exception as e:
+            print(f"  ❌ Answer generation failed: {e}")
+            return {
+                "question": question,
+                "answer": f"Error generating answer: {e}",
+                "citations": sorted_docs,
+                "status": "ERROR"
+            }
 
-print("✅ Answer formation function loaded")
+print("✅ QueryPipeline class defined")
 
-
-# ============================================================================
-# CELL 13: Complete Query Pipeline
-# ============================================================================
-def query_pipeline(question: str, graph: KarakaGraph, model, tokenizer) -> Dict:
-    """
-    Complete query pipeline with isolated LLM sessions
-    """
-    print(f"\n{'='*80}")
-    print(f"QUERY: {question}")
-    print(f"{'='*80}")
-    
-    # Step 1: Decompose query (isolated session)
-    print("\n[Step 1] Decomposing query into Kārakas...")
-    search_plan = decompose_query_to_karakas(question, model, tokenizer)
-    
-    if search_plan:
-        print(f"  ✓ Search plan: {json.dumps(search_plan, indent=2)}")
-    else:
-        print(f"  ⚠️ Failed to parse query")
-    
-    # Step 2: Execute search
-    print("\n[Step 2] Executing graph search...")
-    search_result = execute_search_and_extract(search_plan, graph)
-    
-    # Step 3: Form answer (isolated session)
-    print("\n[Step 3] Forming natural answer...")
-    final_result = form_answer_with_citations(question, search_result, model, tokenizer)
-    
-    return final_result
-
-print("✅ Query pipeline loaded")
-
-
-# ============================================================================
-# CELL 14: Run Queries
-# ============================================================================
-print(f"\n{'='*80}")
-print(f"QUERY PHASE (Each LLM call is isolated)")
-print(f"{'='*80}")
-
-test_queries = [
-    "Who gave what to whom?",
-    "What weapon was used to kill Ravana?",
-    "Who killed Ravana?",
-    "What did Rama give to Lakshmana?"
-]
-
-all_results = []
-for query in test_queries:
-    result = query_pipeline(query, karaka_graph, llm_model, tokenizer)
-    
-    print(f"\n{'─'*80}")
-    print(f"Question: {result['question']}")
-    print(f"Answer: {result['answer']}")
-    print(f"Status: {result['status']}")
-    
-    if result['citations']:
-        print(f"\nCitations:")
-        for cite in result['citations']:
-            print(f"  📄 {cite['document_id']}, Line {cite['line_number']}: \"{cite['original_text']}\"")
-    
-    all_results.append(result)
-
-# Save results
-with open("query_results.json", 'w') as f:
-    json.dump({'queries': all_results, 'timestamp': datetime.now().isoformat()}, f, indent=2)
-
-print(f"\n{'='*80}")
-print(f"✅ COMPLETE")
-print(f"{'='*80}")
-print(f"  Graph: {DB_FILE}")
-print(f"  Visualization: {GRAPH_VIZ_FILE}")
-print(f"  Results: query_results.json")

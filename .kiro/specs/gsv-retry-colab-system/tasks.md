@@ -66,7 +66,7 @@
   - Implement _detect_causal_relationships() using verifier LLM
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 7.12, 7.13_
 
-- [ ] 9. Implement QueryPipeline class
+- [x] 9. Implement QueryPipeline class
   - Create QueryPipeline class with graph, gsv_engine, model, tokenizer
   - Implement answer_query() orchestrator method
   - Implement _execute_traversal() to translate plan to NetworkX operations
