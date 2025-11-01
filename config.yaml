@@ -84,9 +84,10 @@ sentence_split:
   max_paragraph_tokens: 3500
   chunk_size_tokens: 3000
   overlap_tokens: 200
-  max_retries: 2
-  llm_max_output_tokens: 4096
-  fidelity_threshold: 0.99
+  max_retries: 3  # Use LLM with reasoning mode
+  llm_max_output_tokens: 8192
+  fidelity_threshold: 0.98  # Strict - must preserve content
+  use_reasoning: true  # Enable reasoning mode for splitting
   
   # Common abbreviations for sentence boundary detection
   abbreviations:
@@ -131,5 +132,6 @@ test_queries:
 display:
   max_text_preview_length: 100
   max_citation_text_length: 80
-  show_debug_output: true
-  show_verifier_input: true
+  show_debug_output: true  # Detailed debugging for sentence splitting
+  show_verifier_input: false
+  show_split_details: true  # Show LLM responses and alignment details

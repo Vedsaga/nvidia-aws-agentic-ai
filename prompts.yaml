@@ -34,8 +34,22 @@ query_verification_prompt: |
 
 # Sentence Splitting Prompt
 sentence_split_prompt: |
-  Split this text into sentences. Preserve all characters exactly.
-  Return JSON array: ["sentence 1", "sentence 2", ...]
+  Split text into sentences. CRITICAL: Preserve EVERY character including spaces after periods.
+  
+  Rules:
+  1. Sentence ends with . ! ? followed by space (or end of text)
+  2. Keep the space AFTER the period with the sentence: "Hello. " not "Hello."
+  3. Abbreviations (Dr., Prof., Mr., Mrs., Inc., $2.5) are NOT sentence ends
+  4. Verify: joining sentences = exact original (same length, same chars)
+  
+  Return JSON array:
+  ["sentence 1 ", "sentence 2 ", "sentence 3"]
+  
+  Example:
+  Input: "Dr. Smith reviewed data. He found errors."
+  Output: ["Dr. Smith reviewed data. ", "He found errors."]
+  
+  Note the space after "data." is included in first sentence!
 
 # Coreference Resolution Prompt
 coreference_resolution_prompt: |
@@ -104,12 +118,17 @@ answer_generator_prompt: |
   - Do not add information not in the context
 
 sentence_split_retry_prompt: |
-  Your previous sentence split contained errors. 
-  Re-split this text EXACTLY, preserving every character. 
-  Focus especially on this region: "...{context_snippet}..."
+  ERROR: Your previous split lost {missing_chars} characters at position {error_pos}.
+  
+  Problem: "...{context_snippet}..."
+  
+  You MUST include the space after each period with that sentence.
+  Example: "Hello. World" → ["Hello. ", "World"]
+  
+  Re-split preserving EVERY character. Return JSON array only.
 
 sentence_split_simple_prompt: |
-  Split into sentences. Return JSON array only.
+  Split into sentences preserving ALL characters exactly. Return JSON array: ["sent1", "sent2"]
 
 # User Prompt Templates
 # These are used to format user prompts with context

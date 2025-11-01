@@ -1354,6 +1354,10 @@ class IngestionPipeline:
         max_retries = self.SENTENCE_SPLIT_CONFIG['max_retries']
         feedback = None
         
+        if CONFIG['display'].get('show_split_details', False):
+            print(f"\n       📝 Processing paragraph {p_idx} ({len(paragraph)} chars)")
+            print(f"          Text: {paragraph[:150]}...")
+        
         for attempt in range(max_retries + 1):
             if attempt > 0:
                 print(f"\n         🔄 Retry {attempt}/{max_retries}", end=" ")
@@ -1382,12 +1386,42 @@ class IngestionPipeline:
                 return aligned
             
             print(f"[P{p_idx}A{attempt}:FidelityFail]", end=" ")
-            # Generate feedback showing mismatch
+            
+            # OPTIMIZATION: Check if we got SOME sentences correct
+            # Find how many sentences from start are correct
+            correct_sentences = []
+            reconstructed_so_far = ""
+            for sent in aligned:
+                test_recon = reconstructed_so_far + sent
+                if paragraph.startswith(test_recon):
+                    correct_sentences.append(sent)
+                    reconstructed_so_far = test_recon
+                else:
+                    break
+            
+            if correct_sentences and len(correct_sentences) < len(aligned):
+                # We got some correct! Only retry the remaining part
+                remaining_text = paragraph[len(reconstructed_so_far):]
+                if CONFIG['display'].get('show_split_details', False):
+                    print(f"\n          ✅ {len(correct_sentences)} sentences correct, retrying remaining {len(remaining_text)} chars")
+                
+                # Recursively process remaining part
+                remaining_sentences = self._process_paragraph_single(remaining_text, f"{p_idx}R")
+                return correct_sentences + remaining_sentences
+            
+            # Generate specific feedback for full retry
             feedback = self._generate_fidelity_feedback(paragraph, aligned)
+            
+            if CONFIG['display'].get('show_split_details', False):
+                print(f"\n          📝 Feedback: {feedback}")
         
-        # All retries exhausted
-        print(f"[P{p_idx}:AllRetriesFailed→Hybrid]", end=" ")
-        return self._hybrid_sentence_split(paragraph)
+        # All retries exhausted - FAIL (don't use regex fallback)
+        print(f"\n       ❌ CRITICAL: All {max_retries} LLM attempts failed for paragraph {p_idx}")
+        print(f"          This will cause downstream Karaka extraction errors!")
+        print(f"          Paragraph: {paragraph[:200]}...")
+        
+        # Return as single sentence to avoid catastrophic errors
+        return [paragraph]
     
     def _process_paragraph_chunked(self, paragraph: str, p_idx: int) -> List[str]:
         """Process long paragraph using tokenizer-based chunking with overlap"""
@@ -1453,38 +1487,25 @@ class IngestionPipeline:
         return merged
     
     def _llm_propose_sentences(self, text: str, feedback: Optional[str] = None) -> Optional[List[str]]:
-        """Use LLM to propose sentence splits with optional feedback
+        """Use LLM with reasoning mode to propose sentence splits
         
-        Token management: If feedback is provided, we reduce output token limit
-        to account for increased input (system prompt + feedback + text)
+        CRITICAL: This must be accurate - errors cascade to Karaka extraction
         """
         system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
         if not system_prompt:
+            print(f"\n          ❌ No sentence_split_prompt found!")
             return None
         
-        # Calculate token budget
-        base_prompt_tokens = self._count_tokens(system_prompt)
-        text_tokens = self._count_tokens(text)
-        feedback_tokens = self._count_tokens(feedback) if feedback else 0
-        
-        # Total input tokens (approximate)
-        total_input = base_prompt_tokens + text_tokens + feedback_tokens
-        
-        # Adjust output token limit if input is large
-        # Rule: input + output should stay under model's context window
-        # Assuming 8K context window, leave buffer
-        max_safe_input = 3500  # tokens
-        
-        if total_input > max_safe_input:
-            print(f"[TokenOverflow:Input={total_input}]", end=" ")
-            # Reduce output tokens proportionally
-            output_tokens = max(1024, self.SENTENCE_SPLIT_CONFIG['llm_max_output_tokens'] - (total_input - max_safe_input))
-        else:
-            output_tokens = self.SENTENCE_SPLIT_CONFIG['llm_max_output_tokens']
-        
-        # Add feedback if provided (keep it concise)
+        # Add feedback if provided
         if feedback:
             system_prompt = system_prompt + "\n\nFEEDBACK FROM PREVIOUS ATTEMPT:\n" + feedback
+        
+        # Use reasoning mode for better accuracy
+        use_reasoning = self.SENTENCE_SPLIT_CONFIG.get('use_reasoning', True)
+        output_tokens = self.SENTENCE_SPLIT_CONFIG['llm_max_output_tokens']
+        
+        if CONFIG['display'].get('show_split_details', False):
+            print(f"\n          📤 LLM call: {len(text)} chars, reasoning={use_reasoning}")
         
         try:
             response = call_llm_isolated(
@@ -1493,12 +1514,39 @@ class IngestionPipeline:
                 model=self.gsv_engine.model,
                 tokenizer=self.gsv_engine.tokenizer,
                 max_tokens=output_tokens,
-                temperature=0.0
+                temperature=0.0,
+                reasoning_mode="on" if use_reasoning else "off"
             )
             
+            if CONFIG['display'].get('show_split_details', False):
+                print(f"\n          📥 Response: {len(response)} chars")
+                # Show reasoning if present
+                if "<think>" in response:
+                    think_start = response.find("<think>")
+                    think_end = response.find("</think>")
+                    if think_end > think_start:
+                        reasoning = response[think_start+7:think_end].strip()
+                        print(f"\n          🧠 Reasoning: {reasoning[:300]}...")
+            
             proposed = parse_json_response(response)
-            if isinstance(proposed, list) and all(isinstance(s, str) for s in proposed):
-                return [s.strip() for s in proposed if s.strip()]
+            
+            if CONFIG['display'].get('show_split_details', False):
+                print(f"\n          🔍 Parsed: {type(proposed)}")
+            
+            if not isinstance(proposed, list):
+                print(f"\n          ❌ Not a list: {type(proposed)}")
+                return None
+            
+            # Don't strip - preserve exact content
+            sentences = [s for s in proposed if isinstance(s, str)]
+            
+            if CONFIG['display'].get('show_split_details', False):
+                print(f"\n          ✅ Got {len(sentences)} sentences")
+                for i, s in enumerate(sentences[:3], 1):
+                    print(f"\n             {i}. [{len(s)} chars] {s[:100]}...")
+            
+            return sentences if sentences else None
+            
         except Exception as e:
             print(f"[LLM_Error:{str(e)[:50]}]", end=" ")
         
@@ -1517,26 +1565,39 @@ class IngestionPipeline:
         )
     
     def _generate_fidelity_feedback(self, original: str, aligned: List[str]) -> str:
-        """Generate concise feedback showing where fidelity check failed (token-efficient)"""
+        """Generate specific feedback showing EXACTLY where the error is"""
         reconstructed = ''.join(aligned)
-        orig_norm = re.sub(r'\s+', '', original)
-        recon_norm = re.sub(r'\s+', '', reconstructed)
         
-        # Find mismatch position
-        min_len = min(len(orig_norm), len(recon_norm))
-        diff_pos = next((i for i in range(min_len) if orig_norm[i] != recon_norm[i]), min_len)
+        # Find first character difference
+        diff_pos = -1
+        for i in range(min(len(original), len(reconstructed))):
+            if original[i] != reconstructed[i]:
+                diff_pos = i
+                break
         
-        # Show minimal context (keep under 100 tokens)
-        start = max(0, diff_pos - 40)
-        end = min(len(original), diff_pos + 40)
+        if diff_pos == -1:
+            # Length mismatch
+            diff_pos = min(len(original), len(reconstructed))
+        
+        # Show context around error
+        start = max(0, diff_pos - 30)
+        end = min(len(original), diff_pos + 30)
         context = original[start:end]
-        char_diff = len(orig_norm) - len(recon_norm)
+        
+        missing_chars = len(original) - len(reconstructed)
+        
+        # Specific instruction
+        if missing_chars > 0:
+            hint = "You're MISSING spaces after periods. Include them: 'sentence. ' not 'sentence.'"
+        elif missing_chars < 0:
+            hint = "You're ADDING extra characters. Remove them."
+        else:
+            hint = "Characters are wrong. Check punctuation and spacing."
         
         return (
-            f"FIDELITY FAIL at pos {diff_pos}. "
-            f"Context: \"...{context}...\" "
-            f"Char diff: {char_diff:+d}. "
-            f"Fix: Preserve ALL characters exactly."
+            f"ERROR at position {diff_pos}: {hint}\n"
+            f"Context: \"...{context}...\"\n"
+            f"Missing {missing_chars} characters total."
         )
 
     # ========================================================================
@@ -1680,6 +1741,23 @@ class IngestionPipeline:
         
         # Debug logging for failures
         print(f"[FidelityRatio={ratio:.4f}<{threshold}]", end=" ")
+        
+        if CONFIG['display'].get('show_debug_output', False):
+            reconstructed = ''.join(sentences)
+            print(f"\n          ⚠️ Fidelity check failed:")
+            print(f"             Original: {len(original)} chars")
+            print(f"             Reconstructed: {len(reconstructed)} chars")
+            print(f"             Difference: {len(original) - len(reconstructed)} chars")
+            print(f"             Similarity: {ratio:.2%}")
+            
+            # Show first difference
+            for i in range(min(len(original), len(reconstructed))):
+                if i >= len(original) or i >= len(reconstructed) or original[i] != reconstructed[i]:
+                    print(f"\n          🔍 First diff at position {i}:")
+                    print(f"             Original: ...{original[max(0,i-20):i+20]}...")
+                    print(f"             Reconstructed: ...{reconstructed[max(0,i-20):i+20]}...")
+                    break
+        
         return False
 
 
@@ -1687,6 +1765,8 @@ class IngestionPipeline:
         """Use LLM to propose sentences, then align to original for 100% fidelity."""
         system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
         if not system_prompt:
+            if CONFIG['display'].get('show_debug_output', False):
+                print(f"\n          ⚠️ No sentence_split_prompt found")
             return self._fallback_sentence_split(text)
         
         for attempt in range(max_retries):
@@ -1736,7 +1816,9 @@ class IngestionPipeline:
                 continue
         
         # Final fallback: hybrid approach
-        print(f"❌ LLM failed → hybrid fallback")
+        print(f"\n          ❌ All LLM retries failed → hybrid fallback")
+        if CONFIG['display'].get('show_debug_output', False):
+            print(f"\n          Text preview: {text[:200]}...")
         return self._hybrid_sentence_split(text)
 
 
@@ -1900,6 +1982,11 @@ class IngestionPipeline:
             line_number: Line number
             text: Original text
         """
+        # Handle different result formats
+        if not isinstance(golden_candidate, dict):
+            print(f"⚠️ Invalid candidate type: {type(golden_candidate)}")
+            return
+        
         # Extract data from golden candidate
         data = golden_candidate.get("data", {})
         
@@ -2995,11 +3082,19 @@ class OptimizationLogger:
             llm_calls: Number of LLM calls made
             mode: "single_shot" or "gsv_retry"
         """
+        # Handle both dict and None results
+        confidence = 0.0
+        if result:
+            if isinstance(result, dict):
+                confidence = result.get("data", {}).get("confidence", 0.0)
+            elif isinstance(result, list):
+                confidence = 0.0  # List format doesn't have confidence at top level
+        
         self.logs.append({
             "timestamp": datetime.now().isoformat(),
             "text_preview": text[:100],
             "success": result is not None,
-            "confidence": result.get("data", {}).get("confidence") if result else 0.0,
+            "confidence": confidence,
             "duration_ms": duration * 1000,
             "llm_calls": llm_calls,
             "mode": mode
