@@ -24,8 +24,7 @@ entity_resolution:
 file_paths:
   db_file: "karaka_graph.json"
   graph_viz_file: "karaka_graph.gexf"
-  prompts_file: "prompts.json"  # Main prompts (kriya extraction, query decomposition, etc.)
-  prompts_yaml_file: "prompts.yaml"  # Additional prompts (metaphor resolution, entity classification, etc.)
+  prompts_yaml_file: "prompts.yaml"  # All prompts in YAML format
   docs_folder: "./data"
 
 # Graph Schema
@@ -57,20 +56,28 @@ karaka_relation_mapping:
   ADHIKARANA_SPATIAL: "LOCATED_IN"
   ADHIKARANA_TEMPORAL: "OCCURS_AT"
 
-# GSV-Retry Engine Configuration
+# GSV-Retry Engine Configuration (Legacy - being phased out)
 gsv_retry:
-  max_retries: 2
-  scoring_ensemble_size: 3  # Set to 1 for speed
-  num_candidates: 3
-  generation_temperature: 0.5
+  max_retries: 1  # Reduced: reasoning mode handles verification
+  scoring_ensemble_size: 1  # Reduced: single reasoning call is sufficient
+  num_candidates: 1  # Reduced: reasoning mode produces better first attempt
+  generation_temperature: 0.6  # Per model card for reasoning mode
   scoring_temperature: 0.0
-  verification_temperature: 0.0
+  verification_temperature: 0.6  # Reasoning task
 
 # LLM Call Configuration
 llm_call:
-  max_tokens: 4096
-  temperature: 0.0
+  max_tokens: 131072  # Full 128K context window (model supports up to 131,072)
+  temperature: 0.6  # Default for reasoning mode
   pad_token_strategy: "use_eos"
+  
+# Reasoning Mode Configuration
+reasoning:
+  enabled: true  # Toggle reasoning mode
+  mode: "on"  # "on" or "off"
+  batch_size: 10  # Process N sentences per LLM call
+  use_tool_calling: true  # Use structured tool calling format
+  confidence_threshold: 0.85  # Skip verification if confidence > threshold
 
 # Sentence Splitting Pipeline Configuration
 sentence_split:

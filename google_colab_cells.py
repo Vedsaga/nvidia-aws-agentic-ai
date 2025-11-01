@@ -114,16 +114,38 @@ print("\n" + "="*80)
 print("INITIALIZING GRAPH INFRASTRUCTURE")
 print("="*80)
 
-def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = None, temperature: float = None) -> str:
-    """Each call creates a fresh session - no conversation history"""
+def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = None, temperature: float = None, reasoning_mode: str = None, top_p: float = None) -> str:
+    """Each call creates a fresh session - no conversation history
+    
+    Args:
+        system_prompt: System instructions
+        user_prompt: User query
+        model: LLM model
+        tokenizer: Tokenizer
+        max_tokens: Max new tokens to generate
+        temperature: Sampling temperature
+        reasoning_mode: "on", "off", or None (auto-detect from config)
+        top_p: Nucleus sampling parameter (default 0.95 for reasoning)
+    
+    Returns:
+        Model response string
+    """
     # Use config defaults if not specified
     if max_tokens is None:
         max_tokens = CONFIG['llm_call']['max_tokens']
     if temperature is None:
         temperature = CONFIG['llm_call']['temperature']
+    if reasoning_mode is None:
+        reasoning_mode = CONFIG.get('reasoning', {}).get('mode', 'on')
+    if top_p is None:
+        top_p = 0.95 if reasoning_mode == "on" else 1.0
+    
+    # Prepend reasoning mode directive to system prompt
+    reasoning_directive = f"detailed thinking {reasoning_mode}"
+    full_system_prompt = f"{reasoning_directive}\n\n{system_prompt}"
     
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": full_system_prompt},
         {"role": "user", "content": user_prompt}
     ]
     
@@ -143,7 +165,8 @@ def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, ma
         max_new_tokens=max_tokens,
         pad_token_id=tokenizer.eos_token_id,
         do_sample=do_sample,
-        temperature=temperature if do_sample else None
+        temperature=temperature if do_sample else None,
+        top_p=top_p if do_sample else None
     )
     
     output_ids = generated_ids[0][len(model_inputs.input_ids[0]):]
@@ -255,74 +278,23 @@ print("✅ FAISSVectorStore initialized")
 
 
 # ============================================================================
-# CELL 4: Load Prompts from prompts.json
+# CELL 4: Load Prompts from prompts.yaml
 # ============================================================================
-def load_prompts(filepath: str = None) -> dict:
-    """Load all system prompts from JSON configuration file
-    
-    Args:
-        filepath: Path to prompts.json file
-    
-    Returns:
-        Dictionary of prompts
-    
-    Raises:
-        FileNotFoundError: If prompts.json is not found
-        ValueError: If required prompts are missing
-    """
-    if filepath is None:
-        filepath = CONFIG['file_paths']['prompts_file']
-    if not os.path.exists(filepath):
-        raise FileNotFoundError(
-            f"❌ ERROR: {filepath} not found!\n"
-            f"Please ensure prompts.json exists in the current directory.\n"
-            f"Required prompts: kriya_extraction_prompt, kriya_extraction_feedback_prompt, "
-            f"kriya_scoring_prompt, kriya_verification_prompt, query_decomposition_prompt, "
-            f"query_scoring_prompt, query_verification_prompt, sentence_splitting_prompt"
-        )
-    
-    with open(filepath, 'r') as f:
-        prompts = json.load(f)
-    
-    # Validate required prompts exist
-    required_prompts = [
-        "kriya_extraction_prompt",
-        "kriya_extraction_feedback_prompt",
-        "kriya_scoring_prompt",
-        "kriya_verification_prompt",
-        "query_decomposition_prompt",
-        "query_scoring_prompt",
-        "query_verification_prompt",
-        "sentence_split_prompt",
-        "coreference_resolution_prompt"
-    ]
-    
-    missing_prompts = [p for p in required_prompts if p not in prompts]
-    if missing_prompts:
-        raise ValueError(
-            f"❌ ERROR: Missing required prompts in {filepath}:\n"
-            f"{', '.join(missing_prompts)}"
-        )
-    
-    print(f"✅ Loaded {len(prompts)} prompts from {filepath}")
-    return prompts
 
-# Load prompts from both JSON and YAML
-PROMPTS = load_prompts()
-
-# Load additional prompts from prompts.yaml
+# Load prompts from YAML only
 def load_yaml_prompts(filepath: str = None) -> dict:
-    """Load additional prompts from YAML file"""
+    """Load all prompts from YAML file"""
     if filepath is None:
         filepath = CONFIG['file_paths'].get('prompts_yaml_file', 'prompts.yaml')
     if os.path.exists(filepath):
         with open(filepath, 'r') as f:
-            return yaml.safe_load(f)
+            prompts = yaml.safe_load(f)
+            # Filter out placeholder values
+            return {k: v for k, v in prompts.items() if v != "LOAD_FROM_PROMPTS_JSON"}
     return {}
 
-YAML_PROMPTS = load_yaml_prompts()
-# Merge YAML prompts into PROMPTS (YAML takes precedence for duplicates)
-PROMPTS.update({k: v for k, v in YAML_PROMPTS.items() if v != "LOAD_FROM_PROMPTS_JSON"})
+PROMPTS = load_yaml_prompts()
+print(f"✅ Loaded {len(PROMPTS)} prompts from prompts.yaml")
 
 
 # ============================================================================
@@ -383,7 +355,7 @@ print("✅ Entity resolver loaded")
 class GSVRetryEngine:
     """Generate-Score-Verify-Retry engine for robust extraction with cross-validation"""
     
-    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = None, scoring_ensemble_size: int = None):
+    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = None, scoring_ensemble_size: int = None, logger=None):
         """Initialize GSV-Retry engine
         
         Args:
@@ -392,12 +364,14 @@ class GSVRetryEngine:
             prompts: Dictionary of prompts (extraction, scoring, verification, feedback)
             max_retries: Maximum retry attempts (default from config)
             scoring_ensemble_size: Number of scoring calls per candidate (default from config)
+            logger: OptimizationLogger instance for tracking performance
         """
         self.model = model
         self.tokenizer = tokenizer
         self.prompts = prompts
         self.max_retries = max_retries if max_retries is not None else CONFIG['gsv_retry']['max_retries']
         self.scoring_ensemble_size = scoring_ensemble_size if scoring_ensemble_size is not None else CONFIG['gsv_retry']['scoring_ensemble_size']
+        self.logger = logger
         self.failure_stats = {
             'total_attempts': 0,
             'total_failures': 0,
@@ -407,6 +381,9 @@ class GSVRetryEngine:
     def extract_with_retry(self, text: str, extraction_type: str = "kriya", line_ref: str = "") -> Optional[Dict]:
         """Main GSV-Retry loop with fast-path optimization
         
+        OPTIMIZATION: With reasoning mode enabled, this now does single-shot extraction
+        with internal verification, reducing from 13+ calls to 1 call per extraction.
+        
         Args:
             text: Input text to extract from
             extraction_type: Type of extraction ("kriya" or "query")
@@ -415,9 +392,25 @@ class GSVRetryEngine:
         Returns:
             Golden Candidate dict or None if all retries exhausted
         """
+        import time
+        start_time = time.time()
+        
+        # PHASE 3: Single-shot extraction with reasoning mode
+        if CONFIG.get('reasoning', {}).get('enabled', False) and self.max_retries == 1:
+            result = self._extract_single_shot_optimized(text, extraction_type, line_ref)
+            
+            # Log performance
+            if self.logger:
+                duration = time.time() - start_time
+                self.logger.log_extraction(text, result, duration, llm_calls=1, mode="single_shot")
+            
+            return result
+        
+        # Legacy GSV-Retry path (fallback)
         self.failure_stats['total_attempts'] += 1
         feedback_prompt = ""
         failure_log = []
+        llm_calls_made = 0
         
         # Select prompts based on extraction type
         if extraction_type == "kriya":
@@ -437,6 +430,7 @@ class GSVRetryEngine:
             # GENERATE: 3 candidates (isolated LLM calls)
             print("Gen", end="", flush=True)
             candidates = self._generate_candidates(text, base_prompt, feedback_prompt)
+            llm_calls_made += CONFIG['gsv_retry']['num_candidates']
             
             # DEBUG: Show all candidates on first attempt
             if attempt == 0 and candidates:
@@ -460,6 +454,7 @@ class GSVRetryEngine:
             # FAST-PATH: Score only first candidate initially
             print("Score", end="", flush=True)
             first_score = self._get_robust_score(candidates[0], scoring_prompt)
+            llm_calls_made += self.scoring_ensemble_size
             print(f"({first_score:.0f})", end=" ", flush=True)
             
             if first_score >= 95:
@@ -473,11 +468,13 @@ class GSVRetryEngine:
             
             # FULL-PATH: Score all candidates
             scores = [first_score] + [self._get_robust_score(c, scoring_prompt) for c in candidates[1:]]
+            llm_calls_made += (len(candidates) - 1) * self.scoring_ensemble_size
             print(f"AllScores{scores}", end=" ", flush=True)
             
             # VERIFY: Blind verification
             print("Verify", end="", flush=True)
             verifier_choice = self._get_blind_verification(candidates, verification_prompt, text)
+            llm_calls_made += 1
             print(f"({verifier_choice})", end=" ", flush=True)
             
             # CROSS-VALIDATE
@@ -485,7 +482,14 @@ class GSVRetryEngine:
             highest_id = candidates[highest_idx]["id"]
             if highest_id == verifier_choice:
                 print(f"✅ Match! {highest_id}")
-                return candidates[highest_idx]  # Golden Candidate found
+                result = candidates[highest_idx]
+                
+                # Log performance
+                if self.logger:
+                    duration = time.time() - start_time
+                    self.logger.log_extraction(text, result, duration, llm_calls=llm_calls_made, mode="gsv_retry")
+                
+                return result  # Golden Candidate found
             
             print(f"❌ Mismatch: Score→{highest_id} vs Verify→{verifier_choice}")
             
@@ -505,6 +509,12 @@ class GSVRetryEngine:
         self._log_failure(text, failure_log, line_ref, extraction_type)
         self.failure_stats['total_failures'] += 1
         self.failure_stats['failure_reasons']['max_retries_exhausted'] += 1
+        
+        # Log failure
+        if self.logger:
+            duration = time.time() - start_time
+            self.logger.log_extraction(text, None, duration, llm_calls=llm_calls_made, mode="gsv_retry")
+        
         return None
     
     def _generate_candidates(self, text: str, base_prompt: str, feedback: str) -> List[Dict]:
@@ -709,6 +719,83 @@ class GSVRetryEngine:
             return feedback_template.format(feedback=feedback)
         
         return feedback
+    
+    def _extract_single_shot_optimized(self, text: str, extraction_type: str, line_ref: str) -> Optional[Dict]:
+        """Single-shot extraction using reasoning mode (Phase 3 optimization)
+        
+        Args:
+            text: Input text
+            extraction_type: "kriya" or "query"
+            line_ref: Line reference
+        
+        Returns:
+            Extraction dict or None
+        """
+        print(f"        🎯 Single-shot ({extraction_type})...", end=" ", flush=True)
+        
+        # Select prompt
+        if extraction_type == "kriya":
+            system_prompt = self.prompts.get("kriya_extraction_single_shot_prompt", 
+                                            self.prompts.get("kriya_extraction_prompt", ""))
+        else:
+            system_prompt = self.prompts.get("query_decomposition_single_shot_prompt",
+                                            self.prompts.get("query_decomposition_prompt", ""))
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=text,
+                model=self.model,
+                tokenizer=self.tokenizer,
+                reasoning_mode="on",
+                temperature=0.6
+            )
+            
+            parsed = parse_json_response(response)
+            
+            if not parsed:
+                print("❌ Parse failed")
+                self.failure_stats['total_failures'] += 1
+                self.failure_stats['failure_reasons']['parse_error'] += 1
+                return None
+            
+            # Extract confidence
+            confidence = parsed.get("confidence", 0.5)
+            
+            # Validate structure
+            if extraction_type == "kriya":
+                if "extractions" not in parsed or not isinstance(parsed["extractions"], list):
+                    print("❌ Invalid structure")
+                    self.failure_stats['total_failures'] += 1
+                    self.failure_stats['failure_reasons']['invalid_structure'] += 1
+                    return None
+                
+                if len(parsed["extractions"]) == 0:
+                    print("⚠️ No extractions")
+                    return None
+            
+            # Check confidence threshold
+            threshold = CONFIG.get('reasoning', {}).get('confidence_threshold', 0.85)
+            if confidence < threshold:
+                print(f"⚠️ Low confidence ({confidence:.2f})")
+                self.failure_stats['total_failures'] += 1
+                self.failure_stats['failure_reasons']['low_confidence'] += 1
+                return None
+            
+            print(f"✅ Conf: {confidence:.2f}")
+            
+            # Wrap in candidate format for compatibility
+            return {
+                "id": "SingleShot",
+                "data": parsed,
+                "raw_response": response
+            }
+            
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            self.failure_stats['total_failures'] += 1
+            self.failure_stats['failure_reasons']['exception'] += 1
+            return None
     
     def _log_failure(self, text: str, failure_log: List[Dict], line_ref: str, extraction_type: str):
         """Log detailed failure diagnostics
@@ -2884,6 +2971,104 @@ class QueryPipeline:
 print("✅ QueryPipeline class defined")
 
 
+# ============================================================================
+# OPTIMIZATION LOGGER - Production-Ready Logging
+# ============================================================================
+class OptimizationLogger:
+    """Track optimization performance and provide production-ready logs"""
+    
+    def __init__(self):
+        self.logs = []
+        self.start_time = None
+        
+    def start_document(self, doc_id: str):
+        """Start timing a document"""
+        self.start_time = datetime.now()
+        
+    def log_extraction(self, text: str, result: Optional[Dict], duration: float, llm_calls: int, mode: str):
+        """Log a single extraction attempt
+        
+        Args:
+            text: Input text
+            result: Extraction result or None
+            duration: Time in seconds
+            llm_calls: Number of LLM calls made
+            mode: "single_shot" or "gsv_retry"
+        """
+        self.logs.append({
+            "timestamp": datetime.now().isoformat(),
+            "text_preview": text[:100],
+            "success": result is not None,
+            "confidence": result.get("data", {}).get("confidence") if result else 0.0,
+            "duration_ms": duration * 1000,
+            "llm_calls": llm_calls,
+            "mode": mode
+        })
+    
+    def get_stats(self) -> Dict:
+        """Get aggregated statistics"""
+        if not self.logs:
+            return {}
+        
+        successful = [l for l in self.logs if l["success"]]
+        
+        return {
+            "total_extractions": len(self.logs),
+            "successful": len(successful),
+            "failed": len(self.logs) - len(successful),
+            "success_rate": len(successful) / len(self.logs) if self.logs else 0,
+            "avg_confidence": sum(l["confidence"] for l in successful) / len(successful) if successful else 0,
+            "avg_duration_ms": sum(l["duration_ms"] for l in self.logs) / len(self.logs),
+            "total_llm_calls": sum(l["llm_calls"] for l in self.logs),
+            "avg_llm_calls": sum(l["llm_calls"] for l in self.logs) / len(self.logs),
+            "single_shot_count": sum(1 for l in self.logs if l["mode"] == "single_shot"),
+            "gsv_retry_count": sum(1 for l in self.logs if l["mode"] == "gsv_retry")
+        }
+    
+    def print_stats(self):
+        """Print human-readable statistics"""
+        stats = self.get_stats()
+        if not stats:
+            print("No extraction logs yet")
+            return
+        
+        print("\n" + "="*80)
+        print("OPTIMIZATION STATISTICS")
+        print("="*80)
+        print(f"Total Extractions: {stats['total_extractions']}")
+        print(f"Success Rate: {stats['success_rate']*100:.1f}%")
+        print(f"Avg Confidence: {stats['avg_confidence']:.2f}")
+        print(f"Avg Duration: {stats['avg_duration_ms']:.1f}ms")
+        print(f"Total LLM Calls: {stats['total_llm_calls']}")
+        print(f"Avg LLM Calls/Extraction: {stats['avg_llm_calls']:.1f}")
+        print(f"Single-Shot: {stats['single_shot_count']} ({stats['single_shot_count']/stats['total_extractions']*100:.1f}%)")
+        print(f"GSV-Retry: {stats['gsv_retry_count']} ({stats['gsv_retry_count']/stats['total_extractions']*100:.1f}%)")
+    
+    def export_json(self, filepath: str = "optimization_logs.json"):
+        """Export logs to JSON file for production analysis"""
+        with open(filepath, 'w') as f:
+            json.dump({
+                "stats": self.get_stats(),
+                "logs": self.logs
+            }, f, indent=2)
+        print(f"✅ Logs exported to {filepath}")
+
+def extract_reasoning_trace(response: str) -> str:
+    """Extract reasoning trace from <think></think> tags
+    
+    Args:
+        response: LLM response
+    
+    Returns:
+        Reasoning trace text or empty string
+    """
+    import re
+    match = re.search(r'<think>(.*?)</think>', response, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+print("✅ OptimizationLogger class defined")
+
+
 
 # ============================================================================
 # CELL 10: Ingestion Pipeline Step 1 - Embed and Store Documents
@@ -2893,12 +3078,17 @@ print("CELL 10: INGESTION STEP 1 - EMBED AND STORE")
 print("="*80)
 
 # Always reload prompts (in case they were updated)
-PROMPTS = load_prompts()
+PROMPTS = load_yaml_prompts()
 
 # ALWAYS recreate graph (fresh start on each run)
 print("Initializing fresh KarakaGraphV2...")
 karaka_graph = KarakaGraphV2(embedding_model, embedding_tokenizer)
 print("✅ Graph initialized (clean slate)")
+
+# Initialize optimization logger
+print("Initializing OptimizationLogger...")
+opt_logger = OptimizationLogger()
+print("✅ Optimization Logger initialized")
 
 # Always recreate GSV engine (to pick up prompt changes)
 print("Initializing GSVRetryEngine...")
@@ -2906,10 +3096,15 @@ gsv_engine = GSVRetryEngine(
     model=llm_model,
     tokenizer=tokenizer,
     prompts=PROMPTS,
-    max_retries=2,
-    scoring_ensemble_size=1  # Set to 1 for speed, 3 for robustness
+    max_retries=CONFIG['gsv_retry']['max_retries'],
+    scoring_ensemble_size=CONFIG['gsv_retry']['scoring_ensemble_size'],
+    logger=opt_logger
 )
 print("✅ GSV-Retry Engine initialized")
+print(f"   Mode: {'Single-Shot' if CONFIG.get('reasoning', {}).get('enabled') and CONFIG['gsv_retry']['max_retries'] == 1 else 'GSV-Retry'}")
+print(f"   Max Retries: {CONFIG['gsv_retry']['max_retries']}")
+print(f"   Reasoning: {CONFIG.get('reasoning', {}).get('mode', 'off')}")
+print(f"   Max Tokens: {CONFIG['llm_call']['max_tokens']}")
 
 # Always recreate ingestion pipeline (to use new GSV engine)
 print("Initializing IngestionPipeline...")
@@ -2960,6 +3155,10 @@ if 'refined_docs' in globals() and refined_docs:
     print(f"   Entities: {entity_count}")
     print(f"   Edges: {karaka_graph.graph.number_of_edges()}")
     print(f"   Success Rate: {ingestion_pipeline.stats['successful_extractions']}/{ingestion_pipeline.stats['total_lines']} ({ingestion_pipeline.stats['successful_extractions']/ingestion_pipeline.stats['total_lines']*100:.1f}%)")
+    
+    # Print optimization statistics
+    if 'opt_logger' in globals():
+        opt_logger.print_stats()
 else:
     print("❌ No documents to process. Run CELL 8 first.")
 

@@ -1,23 +1,46 @@
 # Prompts for Karaka Knowledge Graph System
 # All system prompts extracted from google_colab_cells.py
 
-# Kriya Extraction Prompts (loaded from prompts.json)
-# These are referenced but defined in prompts.json file
-kriya_extraction_prompt: "LOAD_FROM_PROMPTS_JSON"
-kriya_extraction_feedback_prompt: "LOAD_FROM_PROMPTS_JSON"
-kriya_scoring_prompt: "LOAD_FROM_PROMPTS_JSON"
-kriya_verification_prompt: "LOAD_FROM_PROMPTS_JSON"
+# Core Extraction Prompts
+kriya_extraction_prompt: |
+  Extract verb-centric semantic structures using Karaka theory.
+  Return JSON with extractions array containing verb and karakas.
 
-# Query Processing Prompts (loaded from prompts.json)
-query_decomposition_prompt: "LOAD_FROM_PROMPTS_JSON"
-query_scoring_prompt: "LOAD_FROM_PROMPTS_JSON"
-query_verification_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_extraction_feedback_prompt: |
+  Previous extraction had issues. {feedback}
+  Please correct and re-extract.
 
-# Sentence Splitting Prompt (loaded from prompts.json)
-sentence_split_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_scoring_prompt: |
+  Score this extraction from 1-100 based on correctness and completeness.
+  Return JSON: {"score": <number>, "reasoning": "<text>"}
 
-# Coreference Resolution Prompt (loaded from prompts.json)
-coreference_resolution_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_verification_prompt: |
+  Given original text and multiple extraction candidates, choose the best one.
+  Return JSON: {"choice": "<candidate_id>", "reasoning": "<text>"}
+  If all invalid, return: {"choice": "ALL_INVALID", "reasoning": "<text>"}
+
+# Query Processing Prompts
+query_decomposition_prompt: |
+  Decompose this query into sub-queries for knowledge graph traversal.
+  Return JSON with query_type and sub_queries array.
+
+query_scoring_prompt: |
+  Score this query decomposition from 1-100.
+  Return JSON: {"score": <number>, "reasoning": "<text>"}
+
+query_verification_prompt: |
+  Choose the best query decomposition from candidates.
+  Return JSON: {"choice": "<candidate_id>", "reasoning": "<text>"}
+
+# Sentence Splitting Prompt
+sentence_split_prompt: |
+  Split this text into sentences. Preserve all characters exactly.
+  Return JSON array: ["sentence 1", "sentence 2", ...]
+
+# Coreference Resolution Prompt
+coreference_resolution_prompt: |
+  Resolve what this pronoun/reference refers to in the context.
+  Return the full entity name.
 
 # Embedded Prompts (currently hardcoded in the code)
 # These should be extracted to this file
@@ -131,3 +154,86 @@ coreference_resolution_user_template: |
   {context}
   
   What does this refer to? Return the full entity name.
+
+# ============================================================================
+# OPTIMIZATION: Reasoning-Mode Prompts for Llama-3.1-Nemotron-Nano-8B-v1
+# ============================================================================
+
+# Phase 3: Single-Shot Kriya Extraction (OPTIMIZED)
+kriya_extraction_single_shot_prompt: |
+  You are a semantic role labeling expert using Karaka theory.
+  
+  Extract verb-centric semantic structures (Kriyas) from the input sentence.
+  
+  Steps:
+  1. Identify the main verb (Kriya)
+  2. Extract semantic roles (Karakas) that are EXPLICITLY present:
+     - KARTA: Agent/doer
+     - KARMA: Patient/object
+     - KARANA: Instrument
+     - SAMPRADANA: Recipient
+     - APADANA: Source
+     - ADHIKARANA_SPATIAL: Location
+     - ADHIKARANA_TEMPORAL: Time
+  
+  3. Self-verify:
+     - Is the verb clearly identifiable?
+     - Are the roles explicitly stated (not inferred)?
+     - Are there any ambiguities?
+  
+  4. Assign confidence (0.0-1.0) based on verification
+  
+  Output Format (JSON):
+  {
+    "extractions": [
+      {
+        "verb": "...",
+        "karakas": {"KARTA": "...", "KARMA": "..."},
+        "confidence": 0.95
+      }
+    ],
+    "confidence": 0.95
+  }
+  
+  If no clear verb exists:
+  {
+    "extractions": [],
+    "confidence": 0.0,
+    "reason": "No clear verb found"
+  }
+
+# Phase 3: Single-Shot Query Decomposition (OPTIMIZED)
+query_decomposition_single_shot_prompt: |
+  You are a query understanding expert for knowledge graph retrieval.
+  
+  Decompose the user query into sub-queries that can be answered using a Karaka knowledge graph.
+  
+  Knowledge Graph Structure:
+  - Nodes: Kriyas (verbs), Entities, Documents
+  - Edges: Karaka relations (KARTA, KARMA, etc.), causality, coreference
+  
+  Steps:
+  1. Identify query type:
+     - entity_lookup: "Who is X?"
+     - action_lookup: "What did X do?"
+     - relation_lookup: "What is the relationship between X and Y?"
+     - causal_chain: "What caused X?"
+     - temporal_sequence: "What happened after X?"
+  
+  2. Decompose into graph traversal steps
+  3. Self-verify completeness
+  4. Assign confidence
+  
+  Output Format (JSON):
+  {
+    "query_type": "action_lookup",
+    "sub_queries": [
+      {
+        "step": 1,
+        "description": "Find entity 'Rama'",
+        "graph_operation": "node_lookup",
+        "target": "Rama"
+      }
+    ],
+    "confidence": 0.95
+  }

@@ -2,6 +2,11 @@
 inclusion: always
 ---
 
+DON'T WASTE TOKENS on WRITING DOCs OR ANY MARDKDOWN FILES or ANY SUMMARY.
+
+JUST LET ME KNOW TASK IS DONE. THAT's ENOUGH.
+
+
 ## Hackathon Project Focus
 
 Project: `/home/vedsaga/hackathon/aws-ai-agent`
