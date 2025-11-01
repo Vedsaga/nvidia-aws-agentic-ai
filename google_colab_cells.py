@@ -9,6 +9,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoModel
 import json
+import difflib
 import re
 import os
 import sys
@@ -20,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 import numpy as np
 from collections import defaultdict
+from typing import Dict, List, Optional
 
 ENTITY_SIMILARITY_THRESHOLD = 0.85
 DB_FILE = "karaka_graph.json"
@@ -1165,9 +1167,8 @@ class IngestionPipeline:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                 
-                # Use LLM to split into sentences
-                print(f"      🤖 Using robust LLM sentence splitter...")
-                sentences = self._llm_sentence_split(content)
+                # Use pipeline from sentence_split_pipeline.md
+                sentences = self._split_document_pipeline(content)
                 
                 # Save processed sentences
                 with open(processed_file, 'w', encoding='utf-8') as f:
@@ -1181,74 +1182,409 @@ class IngestionPipeline:
         return refined_docs
 
     # ========================================================================
-    # NEW ROBUST SENTENCE SPLITTING PIPELINE
+    # SENTENCE SPLITTING PIPELINE (sentence_split_pipeline.md)
     # ========================================================================
-
-    def _llm_sentence_split(self, text: str) -> List[str]:
-        """Direct LLM sentence splitting with smart chunking for long texts"""
-        print(f"      🤖 Starting LLM sentence split...")
-        
-        MAX_CHARS = 1500  # ~400 tokens, safe for LLM
-        
-        # If text is short enough, process directly
-        if len(text) <= MAX_CHARS:
-            print(f"      📊 Text fits in one pass ({len(text)} chars)")
-            return self._split_with_retry(text)
-        
-        # For longer text, use sliding window with LLM-guided chunking
-        print(f"      📊 Text too long ({len(text)} chars), using sliding window...")
-        return self._sliding_window_split(text, MAX_CHARS)
     
-    def _sliding_window_split(self, text: str, window_size: int) -> List[str]:
-        """Split long text using sliding window approach"""
+    # Configuration
+    SENTENCE_SPLIT_CONFIG = {
+        'max_paragraph_tokens': 3500,  # Reduced to fit within output limit
+        'chunk_size_tokens': 3000,     # Chunk size for long paragraphs
+        'overlap_tokens': 200,         # Overlap between chunks (tokenizer-based)
+        'max_retries': 2,
+        'llm_max_output_tokens': 4096,  # Output needs to fit input + JSON overhead
+        'fidelity_threshold': 0.99     # Similarity threshold for lenient fidelity check
+    }
+    
+    def _count_tokens(self, text: str) -> int:
+        """Get exact token count using the actual tokenizer"""
+        if not text:
+            return 0
+        try:
+            tokens = self.gsv_engine.tokenizer.encode(text, add_special_tokens=False)
+            return len(tokens)
+        except Exception as e:
+            # Fallback to rough estimate if tokenizer fails
+            print(f"[TokenizerError:{str(e)[:30]}]", end=" ")
+            return len(text) // 4
+    
+    def _split_document_pipeline(self, document: str) -> List[str]:
+        """Main pipeline: Split document → paragraphs → process with overlap
+        
+        Follows sentence_split_pipeline.md flowchart
+        """
+        print(f"\n      🔄 Pipeline: Splitting document...")
+        
+        # Step 1: Split into paragraphs
+        paragraphs = document.split('\n\n')
+        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+        
+        print(f"      📦 Found {len(paragraphs)} paragraph(s)")
+        
         all_sentences = []
-        start = 0
         
-        while start < len(text):
-            # Extract window
-            end = min(start + window_size, len(text))
-            window = text[start:end]
+        for p_idx, paragraph in enumerate(paragraphs, 1):
+            token_count = self._count_tokens(paragraph)
+            print(f"      📝 P{p_idx}/{len(paragraphs)} ({token_count} tokens)...", end=" ")
             
-            # If not at the end, try to break at a sentence boundary
-            if end < len(text):
-                # Find all potential sentence boundaries (. ! ?)
-                boundaries = []
-                for i in range(len(window) - 1, int(window_size * 0.5), -1):
-                    if window[i] in '.!?' and i + 1 < len(window) and window[i + 1] == ' ':
-                        # Check it's not an abbreviation (not preceded by single capital letter)
-                        if i >= 3:
-                            # Look back to see if it's "Dr." "Mr." etc
-                            prev_word = window[max(0, i-10):i].split()[-1] if window[max(0, i-10):i].split() else ""
-                            if prev_word not in ['Dr', 'Mr', 'Ms', 'Mrs', 'Prof', 'Inc', 'Ltd', 'Co', 'St']:
-                                boundaries.append(i + 1)
-                                break
-                
-                if boundaries:
-                    end = start + boundaries[0]
-                    window = text[start:end]
+            # Step 2: Route based on length
+            if token_count <= self.SENTENCE_SPLIT_CONFIG['max_paragraph_tokens']:
+                print("(single)", end=" ")
+                sentences = self._process_paragraph_single(paragraph, p_idx)
+            else:
+                print("(chunked)", end=" ")
+                sentences = self._process_paragraph_chunked(paragraph, p_idx)
             
-            # Process this window with LLM
-            sentences = self._split_with_retry(window)
-            
-            # Add sentences, avoiding duplicates from overlap
-            for sent in sentences:
-                if not all_sentences or sent != all_sentences[-1]:
-                    all_sentences.append(sent)
-            
-            # Move start position
-            start = end
-            
-            print(f"      ✓ Processed {end}/{len(text)} chars: {len(sentences)} sentences")
+            if sentences:
+                print(f"✅ {len(sentences)} sentences")
+                all_sentences.extend(sentences)
+            else:
+                print("❌ Failed, using fallback")
+                all_sentences.extend(self._fallback_sentence_split(paragraph))
         
-        print(f"      ✅ Split complete: {len(all_sentences)} total sentences")
         return all_sentences
     
-
-    
-    def _split_with_retry(self, text: str, max_retries: int = 2) -> List[str]:
-        """Step 3 & 4: Ask LLM to split, verify no hallucination, retry if needed"""
-        system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
+    def _process_paragraph_single(self, paragraph: str, p_idx: int) -> List[str]:
+        """Process paragraph in one LLM call with fidelity check & self-correction"""
+        max_retries = self.SENTENCE_SPLIT_CONFIG['max_retries']
+        feedback = None
         
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                print(f"\n         🔄 Retry {attempt}/{max_retries}", end=" ")
+            
+            # LLM: Propose sentences
+            proposed = self._llm_propose_sentences(paragraph, feedback)
+            if not proposed:
+                print(f"[P{p_idx}A{attempt}:NoProposal]", end=" ")
+                continue
+            
+            print(f"[P{p_idx}A{attempt}:Proposed={len(proposed)}]", end=" ")
+            
+            # Align & Extract exact substrings
+            aligned = self._align_and_reconstruct(paragraph, proposed)
+            if not aligned:
+                print(f"[P{p_idx}A{attempt}:AlignFail]", end=" ")
+                # Generate feedback for retry
+                feedback = self._generate_alignment_feedback(paragraph, proposed)
+                continue
+            
+            print(f"[P{p_idx}A{attempt}:Aligned={len(aligned)}]", end=" ")
+            
+            # Fidelity check
+            if self._verify_exact_fidelity(paragraph, aligned):
+                print(f"[P{p_idx}A{attempt}:FidelityPass]", end=" ")
+                return aligned
+            
+            print(f"[P{p_idx}A{attempt}:FidelityFail]", end=" ")
+            # Generate feedback showing mismatch
+            feedback = self._generate_fidelity_feedback(paragraph, aligned)
+        
+        # All retries exhausted
+        print(f"[P{p_idx}:AllRetriesFailed→Hybrid]", end=" ")
+        return self._hybrid_sentence_split(paragraph)
+    
+    def _process_paragraph_chunked(self, paragraph: str, p_idx: int) -> List[str]:
+        """Process long paragraph using tokenizer-based chunking with overlap"""
+        tokenizer = self.gsv_engine.tokenizer
+        cfg = self.SENTENCE_SPLIT_CONFIG
+        
+        # Tokenize paragraph
+        tokens = tokenizer.encode(paragraph, add_special_tokens=False)
+        chunk_size = cfg['chunk_size_tokens']
+        overlap = cfg['overlap_tokens']
+        
+        chunks = []
+        for i in range(0, len(tokens), chunk_size - overlap):
+            chunk_tokens = tokens[i:i + chunk_size]
+            chunk_text = tokenizer.decode(chunk_tokens)
+            chunks.append((i, chunk_text))
+            if i + chunk_size >= len(tokens):
+                break
+        
+        print(f"[P{p_idx}:Chunks={len(chunks)}]", end=" ")
+        
+        # Process each chunk
+        all_chunk_sentences = []
+        for chunk_idx, (offset, chunk_text) in enumerate(chunks):
+            print(f"\n         C{chunk_idx+1}/{len(chunks)}", end=" ")
+            chunk_sents = self._process_paragraph_single(chunk_text, f"{p_idx}.{chunk_idx+1}")
+            if chunk_sents:
+                all_chunk_sentences.append((offset, chunk_sents))
+        
+        # Merge overlapping outputs
+        merged = self._merge_overlapping_chunks(all_chunk_sentences, paragraph)
+        print(f"\n         [P{p_idx}:Merged={len(merged)}]", end=" ")
+        return merged
+    
+    def _merge_overlapping_chunks(self, chunk_results: List[Tuple[int, List[str]]], original: str) -> List[str]:
+        """
+        Merge sentences from overlapping chunks while preserving order and avoiding duplicates.
+        Uses cursor-based search to ensure repeated sentences (e.g. 'Thank you.') are preserved.
+        """
+        if not chunk_results:
+            return []
+        
+        merged = []
+        cursor = 0  # current search position in original text
+        
+        for offset, sentences in sorted(chunk_results, key=lambda x: x[0]):
+            for sent in sentences:
+                pos = original.find(sent, cursor)
+                if pos == -1:
+                    # If not found, try fuzzy search for robustness
+                    window = original[cursor:cursor + len(sent) * 2]
+                    match = difflib.SequenceMatcher(None, sent, window).find_longest_match(0, len(sent), 0, len(window))
+                    if match.size > len(sent) * 0.8:
+                        pos = cursor + match.b
+                    else:
+                        continue  # skip if can't align
+                
+                # Enforce increasing order
+                if pos >= cursor:
+                    merged.append(sent)
+                    cursor = pos + len(sent)
+        
+        return merged
+    
+    def _llm_propose_sentences(self, text: str, feedback: Optional[str] = None) -> Optional[List[str]]:
+        """Use LLM to propose sentence splits with optional feedback
+        
+        Token management: If feedback is provided, we reduce output token limit
+        to account for increased input (system prompt + feedback + text)
+        """
+        system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
+        if not system_prompt:
+            return None
+        
+        # Calculate token budget
+        base_prompt_tokens = self._count_tokens(system_prompt)
+        text_tokens = self._count_tokens(text)
+        feedback_tokens = self._count_tokens(feedback) if feedback else 0
+        
+        # Total input tokens (approximate)
+        total_input = base_prompt_tokens + text_tokens + feedback_tokens
+        
+        # Adjust output token limit if input is large
+        # Rule: input + output should stay under model's context window
+        # Assuming 8K context window, leave buffer
+        max_safe_input = 3500  # tokens
+        
+        if total_input > max_safe_input:
+            print(f"[TokenOverflow:Input={total_input}]", end=" ")
+            # Reduce output tokens proportionally
+            output_tokens = max(1024, self.SENTENCE_SPLIT_CONFIG['llm_max_output_tokens'] - (total_input - max_safe_input))
+        else:
+            output_tokens = self.SENTENCE_SPLIT_CONFIG['llm_max_output_tokens']
+        
+        # Add feedback if provided (keep it concise)
+        if feedback:
+            system_prompt = system_prompt + "\n\nFEEDBACK FROM PREVIOUS ATTEMPT:\n" + feedback
+        
+        try:
+            response = call_llm_isolated(
+                system_prompt=system_prompt,
+                user_prompt=text,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=output_tokens,
+                temperature=0.0
+            )
+            
+            proposed = parse_json_response(response)
+            if isinstance(proposed, list) and all(isinstance(s, str) for s in proposed):
+                return [s.strip() for s in proposed if s.strip()]
+        except Exception as e:
+            print(f"[LLM_Error:{str(e)[:50]}]", end=" ")
+        
+        return None
+    
+    def _generate_alignment_feedback(self, original: str, proposed: List[str]) -> str:
+        """Generate concise feedback when alignment fails (token-efficient)"""
+        # Keep feedback under 100 tokens
+        orig_preview = original[:150] + "..." if len(original) > 150 else original
+        prop_count = len(proposed)
+        
+        return (
+            f"ALIGNMENT FAILED: {prop_count} proposed sentences don't match original.\n"
+            f"Original preview: {orig_preview}\n"
+            f"Fix: Extract EXACT substrings, preserve all characters."
+        )
+    
+    def _generate_fidelity_feedback(self, original: str, aligned: List[str]) -> str:
+        """Generate concise feedback showing where fidelity check failed (token-efficient)"""
+        reconstructed = ''.join(aligned)
+        orig_norm = re.sub(r'\s+', '', original)
+        recon_norm = re.sub(r'\s+', '', reconstructed)
+        
+        # Find mismatch position
+        min_len = min(len(orig_norm), len(recon_norm))
+        diff_pos = next((i for i in range(min_len) if orig_norm[i] != recon_norm[i]), min_len)
+        
+        # Show minimal context (keep under 100 tokens)
+        start = max(0, diff_pos - 40)
+        end = min(len(original), diff_pos + 40)
+        context = original[start:end]
+        char_diff = len(orig_norm) - len(recon_norm)
+        
+        return (
+            f"FIDELITY FAIL at pos {diff_pos}. "
+            f"Context: \"...{context}...\" "
+            f"Char diff: {char_diff:+d}. "
+            f"Fix: Preserve ALL characters exactly."
+        )
+
+    # ========================================================================
+    # HELPER METHODS (kept for backward compatibility)
+    # ========================================================================
+
+    def _get_safe_chunks(self, text: str, max_size: int = 1500) -> List[str]:
+        """Recursively split text at safe boundaries (paragraphs > lines > sentence ends)"""
+        if len(text) <= max_size:
+            return [text]
+        
+        # 1. Paragraph break (\n\n)
+        split_point = text.rfind('\n\n', 0, max_size)
+        if split_point > 0:
+            chunk1 = text[:split_point]
+            chunk2 = text[split_point:].lstrip()
+            return self._get_safe_chunks(chunk1, max_size) + self._get_safe_chunks(chunk2, max_size)
+        
+        # 2. Line break (\n)
+        split_point = text.rfind('\n', 0, max_size)
+        if split_point > 0:
+            chunk1 = text[:split_point]
+            chunk2 = text[split_point:].lstrip()
+            return self._get_safe_chunks(chunk1, max_size) + self._get_safe_chunks(chunk2, max_size)
+        
+        # 3. Sentence boundary (.!? followed by space)
+        last_end = -1
+        for match in re.finditer(r'(?<=[.!?])\s+', text[:max_size]):
+            last_end = match.end()
+        if last_end > 0:
+            chunk1 = text[:last_end]
+            chunk2 = text[last_end:]
+            return self._get_safe_chunks(chunk1, max_size) + self._get_safe_chunks(chunk2, max_size)
+        
+        # 4. Hard split (last resort)
+        return [text[:max_size]] + self._get_safe_chunks(text[max_size:], max_size)
+
+
+    def _fallback_sentence_split(self, text: str) -> List[str]:
+        """Safe regex splitter without variable-length lookbehind."""
+        parts = re.split(r'([.!?]+)\s+', text)
+        
+        ABBREVS = {
+            'dr', 'mr', 'mrs', 'ms', 'prof', 'sr', 'jr',
+            'inc', 'ltd', 'co', 'corp', 'vs', 'etc',
+            'st', 'ave', 'blvd', 'rd', 'cir', 'pl',
+            'u.s', 'u.k', 'e.g', 'i.e', 'ph.d', 'm.d'
+        }
+        
+        sentences = []
+        i = 0
+        while i < len(parts):
+            current = parts[i].strip()
+            if not current:
+                i += 1
+                continue
+            
+            if i + 1 < len(parts) and re.search(r'[.!?]$', current):
+                punct = parts[i + 1] if i + 1 < len(parts) else ''
+                next_part = parts[i + 2] if i + 2 < len(parts) else ''
+                
+                words = current.split()
+                if words:
+                    last_word = words[-1].rstrip('.!?').lower()
+                    if last_word in ABBREVS:
+                        merged = current + punct + (' ' + next_part if next_part else '')
+                        parts[i] = merged
+                        del parts[i+1:i+3]
+                        continue
+                
+                sentences.append((current + punct).strip())
+                i += 2
+            else:
+                sentences.append(current)
+                i += 1
+        
+        return [s for s in sentences if s]
+
+
+    def _align_and_reconstruct(self, original: str, proposed: List[str]) -> Optional[List[str]]:
+        """Align LLM-proposed sentences to original text using fuzzy matching."""
+        if not proposed:
+            return None
+        
+        remaining = original
+        aligned = []
+        
+        for sent in proposed:
+            sent_clean = re.sub(r'\s+', ' ', sent.strip())
+            if not sent_clean:
+                continue
+            
+            window_size = min(len(remaining), len(sent_clean) * 3)
+            window = remaining[:window_size]
+            
+            best_ratio = 0.0
+            best_end = -1
+            
+            for end in range(max(1, len(sent_clean) - 10), len(window) + 10):
+                if end <= 0 or end > len(window):
+                    continue
+                candidate = window[:end]
+                cand_clean = re.sub(r'\s+', ' ', candidate.strip())
+                if not cand_clean:
+                    continue
+                ratio = difflib.SequenceMatcher(None, sent_clean, cand_clean).ratio()
+                if ratio > best_ratio and ratio >= 0.85:
+                    best_ratio = ratio
+                    best_end = end
+            
+            if best_end == -1:
+                return None
+            
+            aligned.append(remaining[:best_end])
+            remaining = remaining[best_end:].lstrip()
+        
+        if len(remaining.strip()) > 15:
+            return None
+        
+        return aligned
+
+
+    def _verify_exact_fidelity(self, original: str, sentences: List[str]) -> bool:
+        """
+        Verify near-exact fidelity while allowing harmless normalization differences.
+        Ignores spacing, case, unicode variants, and minor punctuation formatting.
+        """
+        import unicodedata
+        
+        def normalize(s: str) -> str:
+            # Normalize unicode and strip redundant whitespace
+            s = unicodedata.normalize("NFKC", s)
+            s = re.sub(r'\s+', ' ', s).strip().lower()
+            return s
+        
+        original_norm = normalize(original)
+        reconstructed_norm = normalize(''.join(sentences))
+        
+        # Compute similarity ratio
+        ratio = difflib.SequenceMatcher(None, original_norm, reconstructed_norm).ratio()
+        
+        # Accept if threshold met (default 99%+ identical)
+        threshold = self.SENTENCE_SPLIT_CONFIG.get('fidelity_threshold', 0.99)
+        if ratio >= threshold:
+            return True
+        
+        # Debug logging for failures
+        print(f"[FidelityRatio={ratio:.4f}<{threshold}]", end=" ")
+        return False
+
+
+    def _split_chunk_with_llm(self, text: str, max_retries: int = 3) -> List[str]:
+        """Use LLM to propose sentences, then align to original for 100% fidelity."""
+        system_prompt = self.gsv_engine.prompts.get("sentence_split_prompt")
         if not system_prompt:
             return self._fallback_sentence_split(text)
         
@@ -1259,128 +1595,84 @@ class IngestionPipeline:
                     user_prompt=text,
                     model=self.gsv_engine.model,
                     tokenizer=self.gsv_engine.tokenizer,
-                    max_tokens=1000
+                    max_tokens=800
                 )
                 
-                result = parse_json_response(response)
-                
-                if result and isinstance(result, list):
-                    proposed_sentences = [str(s).strip() for s in result if str(s).strip()]
-                    
-                    # Step 4a: Align LLM output to match original punctuation
-                    try:
-                        aligned_sentences = self._align_punctuation(text, proposed_sentences)
-                    except Exception as align_error:
-                        print(f"      ⚠️ Attempt {attempt+1}: Alignment failed ({align_error}), retrying...")
-                        continue
-                    
-                    # Step 4b: Verify no hallucination (strict check)
-                    if self._verify_fidelity(text, aligned_sentences):
-                        return aligned_sentences
-                    else:
-                        # Debug: show what's different
-                        if attempt == max_retries - 1:  # Last attempt
-                            orig_norm = re.sub(r'\s+', '', text).lower()
-                            prop_norm = re.sub(r'\s+', '', "".join(aligned_sentences)).lower()
-                            print(f"      ⚠️ Fidelity mismatch: orig={len(orig_norm)} vs prop={len(prop_norm)}")
-                        print(f"      ⚠️ Attempt {attempt+1}: Hallucination detected, retrying...")
-                        continue
-                else:
-                    print(f"      ⚠️ Attempt {attempt+1}: Invalid response format, retrying...")
+                proposed = parse_json_response(response)
+                if not (isinstance(proposed, list) and all(isinstance(s, str) for s in proposed)):
+                    print(f"⚠️ Invalid format", end=" ")
                     continue
+                
+                proposed = [s.strip() for s in proposed if s.strip()]
+                if not proposed:
+                    print(f"⚠️ Empty output", end=" ")
+                    continue
+                
+                # Try alignment
+                aligned = self._align_and_reconstruct(text, proposed)
+                if aligned and self._verify_exact_fidelity(text, aligned):
+                    return aligned
+                
+                # Self-correction on last attempt
+                if attempt == max_retries - 2:
+                    orig_norm = re.sub(r'\s+', '', text)
+                    prop_norm = re.sub(r'\s+', '', ''.join(proposed))
+                    min_len = min(len(orig_norm), len(prop_norm))
+                    diff_pos = next((i for i in range(min_len) if orig_norm[i] != prop_norm[i]), min_len)
+                    start_ctx = max(0, diff_pos - 50)
+                    end_ctx = min(len(text), diff_pos + 50)
+                    context_snippet = text[start_ctx:end_ctx]
                     
+                    system_prompt = (
+                        "Your previous sentence split contained errors. "
+                        "Re-split this text EXACTLY, preserving every character. "
+                        "Focus especially on this region: \"...{}...\"".format(context_snippet)
+                    )
+                    continue
+                
+                print(f"⚠️ Fidelity failed", end=" ")
+                
             except Exception as e:
-                print(f"      ⚠️ Attempt {attempt+1} failed: {e}")
+                print(f"⚠️ Exception: {e}", end=" ")
                 continue
         
-        # All retries exhausted, use fallback
-        print(f"      ❌ All retries exhausted, using fallback regex")
-        return self._fallback_sentence_split(text)
-    
-    def _align_punctuation(self, original: str, sentences: List[str]) -> List[str]:
-        """Align LLM output punctuation to match original text"""
-        # Simpler approach: normalize both, find differences, restore original punctuation
-        joined_llm = "".join(sentences)
-        
-        # Create normalized versions (no whitespace, lowercase)
-        orig_chars = [c for c in original if not c.isspace()]
-        llm_chars = [c for c in joined_llm if not c.isspace()]
-        
-        if len(orig_chars) != len(llm_chars):
-            # Length mismatch - can't align
-            return sentences
-        
-        # Build mapping: for each position, if it's a quote/dash mismatch, use original
-        aligned_chars = []
-        for orig_c, llm_c in zip(orig_chars, llm_chars):
-            # If both are quotes (any style), use original
-            if orig_c in '"\'""''' and llm_c in '"\'""''':
-                aligned_chars.append(orig_c)
-            # If both are dashes (any style), use original
-            elif orig_c in '-–—' and llm_c in '-–—':
-                aligned_chars.append(orig_c)
-            # If same character (case-insensitive), use original case
-            elif orig_c.lower() == llm_c.lower():
-                aligned_chars.append(orig_c)
-            else:
-                # Different characters - use LLM's version
-                aligned_chars.append(llm_c)
-        
-        # Now rebuild sentences with aligned characters and original whitespace
-        aligned_text = ""
-        char_idx = 0
-        for orig_c in original:
-            if orig_c.isspace():
-                aligned_text += orig_c
-            else:
-                if char_idx < len(aligned_chars):
-                    aligned_text += aligned_chars[char_idx]
-                    char_idx += 1
-        
-        # Split aligned text back into sentences (same boundaries as LLM output)
-        result = []
-        text_idx = 0
-        for sent in sentences:
-            sent_len = len([c for c in sent if not c.isspace()])
-            # Extract corresponding portion from aligned text
-            extracted = ""
-            char_count = 0
-            while char_count < sent_len and text_idx < len(aligned_text):
-                if not aligned_text[text_idx].isspace():
-                    char_count += 1
-                extracted += aligned_text[text_idx]
-                text_idx += 1
-            result.append(extracted.strip())
-        
-        return result
-    
-    def _verify_fidelity(self, original_text: str, proposed_sentences: List[str]) -> bool:
-        """Verify LLM didn't hallucinate by comparing normalized text (strict check)"""
-        original_norm = re.sub(r'\s+', '', original_text).lower()
-        proposed_norm = re.sub(r'\s+', '', "".join(proposed_sentences)).lower()
-        return original_norm == proposed_norm
+        # Final fallback: hybrid approach
+        print(f"❌ LLM failed → hybrid fallback")
+        return self._hybrid_sentence_split(text)
 
-    def _fallback_sentence_split(self, text: str) -> List[str]:
-        """
-        Simple programmatic sentence splitting using regex.
-        Used for pre-splitting and as a final fallback.
-        """
-        # This regex is weak for *correctness* but good for *pre-splitting*
-        # because it splits *too much*, creating small, safe fragments.
-        # It splits on period/question/exclamation followed by whitespace.
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+
+    def _hybrid_sentence_split(self, text: str) -> List[str]:
+        """Combine LLM (1 try) + rule-based + choose best via fidelity."""
+        llm_proposal = None
+        try:
+            response = call_llm_isolated(
+                system_prompt="Split into sentences. Return JSON array only.",
+                user_prompt=text,
+                model=self.gsv_engine.model,
+                tokenizer=self.gsv_engine.tokenizer,
+                max_tokens=800,
+                temperature=0.0
+            )
+            proposed = parse_json_response(response)
+            if isinstance(proposed, list):
+                llm_proposal = [s.strip() for s in proposed if s.strip()]
+        except:
+            pass
         
-        # We must also clean up the newlines that you might have,
-        # otherwise they become part of the chunk.
-        cleaned_sentences = []
-        for s in sentences:
-            # Replace all forms of newlines and excess whitespace with a single space
-            s_cleaned = re.sub(r'\s+', ' ', s).strip()
-            if s_cleaned:
-                cleaned_sentences.append(s_cleaned)
+        rule_proposal = self._fallback_sentence_split(text)
         
-        return cleaned_sentences
-    
+        candidates = []
+        if llm_proposal:
+            aligned = self._align_and_reconstruct(text, llm_proposal)
+            if aligned and self._verify_exact_fidelity(text, aligned):
+                candidates.append(aligned)
+        if rule_proposal and self._verify_exact_fidelity(text, rule_proposal):
+            candidates.append(rule_proposal)
+        
+        if candidates:
+            return candidates[0]
+        
+        return rule_proposal if rule_proposal else [text.strip()]
     # ========================================================================
     # END OF NEW SPLITTING PIPELINE
     # ========================================================================
