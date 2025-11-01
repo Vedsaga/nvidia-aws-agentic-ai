@@ -2,7 +2,7 @@
 # CELL 1: Setup & Dependencies
 # ============================================================================
 print("Installing required libraries...")
-!pip install transformers torch accelerate networkx faiss-cpu -q
+!pip install transformers torch accelerate networkx faiss-cpu pyyaml -q
 print("✅ Dependencies installed.")
 
 import torch
@@ -15,6 +15,7 @@ import os
 import sys
 import networkx as nx
 import faiss
+import yaml
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -23,9 +24,18 @@ import numpy as np
 from collections import defaultdict
 from typing import Dict, List, Optional
 
-ENTITY_SIMILARITY_THRESHOLD = 0.85
-DB_FILE = "karaka_graph.json"
-GRAPH_VIZ_FILE = "karaka_graph.gexf"
+# Load configuration from config.yaml
+def load_config(config_path: str = "config.yaml") -> dict:
+    """Load configuration from YAML file"""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+CONFIG = load_config()
+
+# Extract commonly used config values
+ENTITY_SIMILARITY_THRESHOLD = CONFIG['entity_resolution']['similarity_threshold']
+DB_FILE = CONFIG['file_paths']['db_file']
+GRAPH_VIZ_FILE = CONFIG['file_paths']['graph_viz_file']
 
 @dataclass
 class Citation:
@@ -53,36 +63,39 @@ print("LOADING MODELS")
 print("="*80)
 
 if 'llm_model' not in globals():
-    print("Loading Llama-3.1-Nemotron-Nano-8B-v1...")
-    model_id = "nvidia/Llama-3.1-Nemotron-Nano-8B-v1"
-    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    print(f"Loading {CONFIG['models']['llm']['model_id']}...")
+    model_id = CONFIG['models']['llm']['model_id']
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=CONFIG['models']['llm']['trust_remote_code'])
     tokenizer.pad_token_id = tokenizer.eos_token_id
     
-    # Try bfloat16 first, fallback to float16 if not supported
+    # Try primary dtype first, fallback to secondary if not supported
     try:
+        dtype_primary = getattr(torch, CONFIG['models']['llm']['dtype_primary'])
         llm_model = AutoModelForCausalLM.from_pretrained(
             model_id,
-            dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True
+            dtype=dtype_primary,
+            device_map=CONFIG['models']['llm']['device_map'],
+            trust_remote_code=CONFIG['models']['llm']['trust_remote_code']
         )
     except Exception as e:
-        print(f"⚠️  bfloat16 not supported, using float16: {e}")
+        print(f"⚠️  {CONFIG['models']['llm']['dtype_primary']} not supported, using {CONFIG['models']['llm']['dtype_fallback']}: {e}")
+        dtype_fallback = getattr(torch, CONFIG['models']['llm']['dtype_fallback'])
         llm_model = AutoModelForCausalLM.from_pretrained(
             model_id,
-            dtype=torch.float16,
-            device_map="auto",
-            trust_remote_code=True
+            dtype=dtype_fallback,
+            device_map=CONFIG['models']['llm']['device_map'],
+            trust_remote_code=CONFIG['models']['llm']['trust_remote_code']
         )
     print("✅ LLM loaded")
 else:
     print("✅ Models already loaded — reusing.")
 
 if 'embedding_model' not in globals():
-    print("Loading llama-3.2-nv-embedqa-1b-v2 for embeddings...")
-    embedding_tokenizer = AutoTokenizer.from_pretrained("nvidia/llama-3.2-nv-embedqa-1b-v2")
-    embedding_model = AutoModel.from_pretrained("nvidia/llama-3.2-nv-embedqa-1b-v2", trust_remote_code=True)
-    embedding_model = embedding_model.to("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Loading {CONFIG['models']['embedding']['model_id']} for embeddings...")
+    embedding_tokenizer = AutoTokenizer.from_pretrained(CONFIG['models']['embedding']['model_id'])
+    embedding_model = AutoModel.from_pretrained(CONFIG['models']['embedding']['model_id'], trust_remote_code=CONFIG['models']['embedding']['trust_remote_code'])
+    device = CONFIG['models']['embedding']['device'] if torch.cuda.is_available() else "cpu"
+    embedding_model = embedding_model.to(device)
     embedding_model.eval()
     print("✅ Embedding model loaded")
 
@@ -101,8 +114,14 @@ print("\n" + "="*80)
 print("INITIALIZING GRAPH INFRASTRUCTURE")
 print("="*80)
 
-def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = 2048, temperature: float = 0.0) -> str:
+def call_llm_isolated(system_prompt: str, user_prompt: str, model, tokenizer, max_tokens: int = None, temperature: float = None) -> str:
     """Each call creates a fresh session - no conversation history"""
+    # Use config defaults if not specified
+    if max_tokens is None:
+        max_tokens = CONFIG['llm_call']['max_tokens']
+    if temperature is None:
+        temperature = CONFIG['llm_call']['temperature']
+    
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_prompt}
@@ -155,20 +174,9 @@ def parse_json_response(response: str) -> Any:
 class GraphSchema:
     """Strict schema enforcement for Karaka knowledge graph"""
     
-    NODE_TYPES = {"Kriya", "Entity", "Document"}
+    NODE_TYPES = set(CONFIG['graph_schema']['node_types'])
     
-    EDGE_RELATIONS = {
-        "HAS_KARTĀ",           # Kriyā → Entity (agent)
-        "HAS_KARMA",           # Kriyā → Entity (patient)
-        "USES_KARANA",         # Kriyā → Entity (instrument)
-        "TARGETS_SAMPRADĀNA",  # Kriyā → Entity (recipient)
-        "FROM_APĀDĀNA",        # Kriyā → Entity (source)
-        "LOCATED_IN",          # Kriyā → Entity (spatial location)
-        "OCCURS_AT",           # Kriyā → Entity (temporal location)
-        "IS_SAME_AS",          # Entity → Entity (coreference)
-        "CAUSES",              # Kriyā → Kriyā (causality)
-        "CITED_IN"             # Kriyā → Document (provenance)
-    }
+    EDGE_RELATIONS = set(CONFIG['graph_schema']['edge_relations'])
     
     def validate_node(self, node_id: str, attrs: dict) -> bool:
         """Validate node has required type attribute"""
@@ -203,9 +211,9 @@ class GraphSchema:
 class FAISSVectorStore:
     """Wrapper for FAISS index with document ID mapping"""
     
-    def __init__(self, dimension: int = 2048):
-        self.dimension = dimension
-        self.index = faiss.IndexFlatL2(dimension)
+    def __init__(self, dimension: int = None):
+        self.dimension = dimension or CONFIG['faiss']['dimension']
+        self.index = faiss.IndexFlatL2(self.dimension)
         self.doc_id_map = []
         self.doc_id_to_idx = {}
     
@@ -219,7 +227,9 @@ class FAISSVectorStore:
         self.doc_id_map.append(doc_id)
         self.doc_id_to_idx[doc_id] = idx
     
-    def query_nearby(self, doc_id: str, k: int = 5) -> List[str]:
+    def query_nearby(self, doc_id: str, k: int = None) -> List[str]:
+        if k is None:
+            k = CONFIG['faiss']['nearby_k']
         if doc_id not in self.doc_id_to_idx:
             return []
         
@@ -247,7 +257,7 @@ print("✅ FAISSVectorStore initialized")
 # ============================================================================
 # CELL 4: Load Prompts from prompts.json
 # ============================================================================
-def load_prompts(filepath: str = "prompts.json") -> dict:
+def load_prompts(filepath: str = None) -> dict:
     """Load all system prompts from JSON configuration file
     
     Args:
@@ -260,6 +270,8 @@ def load_prompts(filepath: str = "prompts.json") -> dict:
         FileNotFoundError: If prompts.json is not found
         ValueError: If required prompts are missing
     """
+    if filepath is None:
+        filepath = CONFIG['file_paths']['prompts_file']
     if not os.path.exists(filepath):
         raise FileNotFoundError(
             f"❌ ERROR: {filepath} not found!\n"
@@ -295,18 +307,32 @@ def load_prompts(filepath: str = "prompts.json") -> dict:
     print(f"✅ Loaded {len(prompts)} prompts from {filepath}")
     return prompts
 
-# Load prompts
+# Load prompts from both JSON and YAML
 PROMPTS = load_prompts()
+
+# Load additional prompts from prompts.yaml
+def load_yaml_prompts(filepath: str = None) -> dict:
+    """Load additional prompts from YAML file"""
+    if filepath is None:
+        filepath = CONFIG['file_paths'].get('prompts_yaml_file', 'prompts.yaml')
+    if os.path.exists(filepath):
+        with open(filepath, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
+
+YAML_PROMPTS = load_yaml_prompts()
+# Merge YAML prompts into PROMPTS (YAML takes precedence for duplicates)
+PROMPTS.update({k: v for k, v in YAML_PROMPTS.items() if v != "LOAD_FROM_PROMPTS_JSON"})
 
 
 # ============================================================================
 # CELL 5: Entity Resolution
 # ============================================================================
 class EntityResolver:
-    def __init__(self, embedding_model, embedding_tokenizer, threshold: float = ENTITY_SIMILARITY_THRESHOLD):
+    def __init__(self, embedding_model, embedding_tokenizer, threshold: float = None):
         self.model = embedding_model
         self.tokenizer = embedding_tokenizer
-        self.threshold = threshold
+        self.threshold = threshold if threshold is not None else CONFIG['entity_resolution']['similarity_threshold']
         self.entity_registry = {}
         self.entity_map = {}
     
@@ -357,21 +383,21 @@ print("✅ Entity resolver loaded")
 class GSVRetryEngine:
     """Generate-Score-Verify-Retry engine for robust extraction with cross-validation"""
     
-    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = 2, scoring_ensemble_size: int = 3):
+    def __init__(self, model, tokenizer, prompts: dict, max_retries: int = None, scoring_ensemble_size: int = None):
         """Initialize GSV-Retry engine
         
         Args:
             model: LLM model for generation
             tokenizer: Tokenizer for the model
             prompts: Dictionary of prompts (extraction, scoring, verification, feedback)
-            max_retries: Maximum retry attempts (default 2)
-            scoring_ensemble_size: Number of scoring calls per candidate (default 3, set to 1 for speed)
+            max_retries: Maximum retry attempts (default from config)
+            scoring_ensemble_size: Number of scoring calls per candidate (default from config)
         """
         self.model = model
         self.tokenizer = tokenizer
         self.prompts = prompts
-        self.max_retries = max_retries
-        self.scoring_ensemble_size = scoring_ensemble_size
+        self.max_retries = max_retries if max_retries is not None else CONFIG['gsv_retry']['max_retries']
+        self.scoring_ensemble_size = scoring_ensemble_size if scoring_ensemble_size is not None else CONFIG['gsv_retry']['scoring_ensemble_size']
         self.failure_stats = {
             'total_attempts': 0,
             'total_failures': 0,
@@ -495,7 +521,8 @@ class GSVRetryEngine:
         candidates = []
         full_prompt = base_prompt + ("\n\n" + feedback if feedback else "")
         
-        for i in range(3):
+        num_candidates = CONFIG['gsv_retry']['num_candidates']
+        for i in range(num_candidates):
             print(".", end="", flush=True)
             try:
                 response = call_llm_isolated(
@@ -503,7 +530,7 @@ class GSVRetryEngine:
                     user_prompt=text,
                     model=self.model,
                     tokenizer=self.tokenizer,
-                    temperature=0.5  # Higher temp for diverse candidates
+                    temperature=CONFIG['gsv_retry']['generation_temperature']
                 )
                 
                 # DEBUG: Show raw response if parsing fails
@@ -567,7 +594,7 @@ class GSVRetryEngine:
                     user_prompt=json.dumps(candidate["data"], indent=2),
                     model=self.model,
                     tokenizer=self.tokenizer,
-                    temperature=0.0  # Deterministic scoring
+                    temperature=CONFIG['gsv_retry']['scoring_temperature']
                 )
                 
                 score_data = parse_json_response(response)
@@ -627,7 +654,7 @@ class GSVRetryEngine:
             context_str = json.dumps(context, indent=2)
             
             # DEBUG: Show what we're sending to verifier (first time only)
-            if not hasattr(self, '_debug_shown'):
+            if CONFIG['display']['show_verifier_input'] and not hasattr(self, '_debug_shown'):
                 print(f"\n          📤 Verifier input (full):")
                 print(context_str)
                 self._debug_shown = True
@@ -637,11 +664,12 @@ class GSVRetryEngine:
                 user_prompt=context_str,
                 model=self.model,
                 tokenizer=self.tokenizer,
-                temperature=0.0  # Deterministic verification
+                temperature=CONFIG['gsv_retry']['verification_temperature']
             )
             
             # DEBUG: Show raw verifier response
-            print(f"\n          🔍 Verifier raw: {response[:200]}...", end="", flush=True)
+            if CONFIG['display']['show_debug_output']:
+                print(f"\n          🔍 Verifier raw: {response[:200]}...", end="", flush=True)
             
             result = parse_json_response(response)
             if result and isinstance(result, dict):
@@ -691,8 +719,9 @@ class GSVRetryEngine:
             line_ref: Line reference for context
             extraction_type: Type of extraction
         """
+        max_preview = CONFIG['display']['max_text_preview_length']
         print(f"\n      ❌ GSV-Retry FAILED after {self.max_retries} attempts at {line_ref}")
-        print(f"      Text: \"{text[:100]}...\"" if len(text) > 100 else f"      Text: \"{text}\"")
+        print(f"      Text: \"{text[:max_preview]}...\"" if len(text) > max_preview else f"      Text: \"{text}\"")
         print(f"      Type: {extraction_type}")
         print(f"      Failure log:")
         
@@ -857,7 +886,7 @@ class KarakaGraphV2:
             self.entity_index[target].append(source)
     
     def traverse(self, start_node: str, edge_filter: Optional[List[str]] = None, 
-                max_hops: int = 3, direction: str = "out") -> List[str]:
+                max_hops: int = None, direction: str = None) -> List[str]:
         """Multi-hop graph traversal with edge filtering
         
         Args:
@@ -869,6 +898,11 @@ class KarakaGraphV2:
         Returns:
             List of reachable node IDs
         """
+        if max_hops is None:
+            max_hops = CONFIG['graph_traversal']['max_hops']
+        if direction is None:
+            direction = CONFIG['graph_traversal']['default_direction']
+        
         if start_node not in self.graph:
             return []
         
@@ -986,15 +1020,7 @@ class KarakaGraphV2:
                 canonical = self.entity_resolver.resolve_entity(required_entity)
                 
                 # Map kāraka type to relation
-                relation_map = {
-                    "KARTA": "HAS_KARTĀ",
-                    "KARMA": "HAS_KARMA",
-                    "KARANA": "USES_KARANA",
-                    "SAMPRADANA": "TARGETS_SAMPRADĀNA",
-                    "APADANA": "FROM_APĀDĀNA",
-                    "ADHIKARANA_SPATIAL": "LOCATED_IN",
-                    "ADHIKARANA_TEMPORAL": "OCCURS_AT"
-                }
+                relation_map = CONFIG['karaka_relation_mapping']
                 relation = relation_map.get(karaka_type, karaka_type)
                 
                 # Check if edge exists (FROM Kriyā TO Entity)
@@ -1185,15 +1211,8 @@ class IngestionPipeline:
     # SENTENCE SPLITTING PIPELINE (sentence_split_pipeline.md)
     # ========================================================================
     
-    # Configuration
-    SENTENCE_SPLIT_CONFIG = {
-        'max_paragraph_tokens': 3500,  # Reduced to fit within output limit
-        'chunk_size_tokens': 3000,     # Chunk size for long paragraphs
-        'overlap_tokens': 200,         # Overlap between chunks (tokenizer-based)
-        'max_retries': 2,
-        'llm_max_output_tokens': 4096,  # Output needs to fit input + JSON overhead
-        'fidelity_threshold': 0.99     # Similarity threshold for lenient fidelity check
-    }
+    # Configuration loaded from config.yaml
+    SENTENCE_SPLIT_CONFIG = CONFIG['sentence_split']
     
     def _count_tokens(self, text: str) -> int:
         """Get exact token count using the actual tokenizer"""
@@ -1473,12 +1492,7 @@ class IngestionPipeline:
         """Safe regex splitter without variable-length lookbehind."""
         parts = re.split(r'([.!?]+)\s+', text)
         
-        ABBREVS = {
-            'dr', 'mr', 'mrs', 'ms', 'prof', 'sr', 'jr',
-            'inc', 'ltd', 'co', 'corp', 'vs', 'etc',
-            'st', 'ave', 'blvd', 'rd', 'cir', 'pl',
-            'u.s', 'u.k', 'e.g', 'i.e', 'ph.d', 'm.d'
-        }
+        ABBREVS = set(CONFIG['sentence_split']['abbreviations'])
         
         sentences = []
         i = 0
@@ -1623,10 +1637,8 @@ class IngestionPipeline:
                     end_ctx = min(len(text), diff_pos + 50)
                     context_snippet = text[start_ctx:end_ctx]
                     
-                    system_prompt = (
-                        "Your previous sentence split contained errors. "
-                        "Re-split this text EXACTLY, preserving every character. "
-                        "Focus especially on this region: \"...{}...\"".format(context_snippet)
+                    system_prompt = PROMPTS.get("sentence_split_retry_prompt", "").format(
+                        context_snippet=context_snippet
                     )
                     continue
                 
@@ -1646,7 +1658,7 @@ class IngestionPipeline:
         llm_proposal = None
         try:
             response = call_llm_isolated(
-                system_prompt="Split into sentences. Return JSON array only.",
+                system_prompt=PROMPTS.get("sentence_split_simple_prompt", "Split into sentences. Return JSON array only."),
                 user_prompt=text,
                 model=self.gsv_engine.model,
                 tokenizer=self.gsv_engine.tokenizer,
@@ -1869,15 +1881,7 @@ class IngestionPipeline:
         Returns:
             Graph relation name
         """
-        mapping = {
-            "KARTA": "HAS_KARTĀ",
-            "KARMA": "HAS_KARMA",
-            "KARANA": "USES_KARANA",
-            "SAMPRADANA": "TARGETS_SAMPRADĀNA",
-            "APADANA": "FROM_APĀDĀNA",
-            "ADHIKARANA_SPATIAL": "LOCATED_IN",
-            "ADHIKARANA_TEMPORAL": "OCCURS_AT"
-        }
+        mapping = CONFIG['karaka_relation_mapping']
         return mapping.get(karaka_type, "UNKNOWN")
     
     def _print_statistics(self):
@@ -2218,27 +2222,14 @@ What entity does this pronoun refer to?"""
         if not context_texts:
             return None
         
-        system_prompt = """You are an expert in resolving metaphorical and descriptive references to their actual entities.
-
-Given a metaphorical or descriptive name and context, identify the actual entity being referred to.
-
-Return JSON:
-{
-  "actual_entity": "<entity name or null>",
-  "confidence": "<high|medium|low>",
-  "reasoning": "<explanation>"
-}
-
-Only return an entity if confident."""
+        system_prompt = PROMPTS.get("metaphor_resolution_prompt", "")
         
         context_str = "\n".join([f"- {text}" for text in context_texts[:5]])
         
-        user_prompt = f"""Metaphorical reference: "{metaphor}"
-
-Context:
-{context_str}
-
-What is the actual entity being referred to?"""
+        user_prompt = PROMPTS.get("metaphor_resolution_user_template", "").format(
+            metaphor=metaphor,
+            context=context_str
+        )
         
         try:
             response = call_llm_isolated(
@@ -2346,32 +2337,14 @@ What is the actual entity being referred to?"""
         if not context_texts:
             return None
         
-        system_prompt = """You are an entity type classifier. Given an entity name and context, classify it into ONE of these types:
-
-- Person: Human individuals
-- Deity: Gods, goddesses, divine beings
-- Location: Places, cities, forests, mountains
-- Organization: Groups, armies, kingdoms
-- Object: Physical objects, weapons, artifacts
-- Concept: Abstract concepts, emotions, qualities
-- Animal: Animals, creatures
-- Event: Named events, battles, ceremonies
-
-Return JSON:
-{
-  "entity_type": "<type from list above>",
-  "confidence": "<high|medium|low>",
-  "reasoning": "<brief explanation>"
-}"""
+        system_prompt = PROMPTS.get("entity_type_classifier_prompt", "")
         
         context_str = "\n".join([f"- {text}" for text in context_texts[:3]])
         
-        user_prompt = f"""Entity: "{entity_name}"
-
-Context:
-{context_str}
-
-What type is this entity?"""
+        user_prompt = PROMPTS.get("entity_type_classifier_user_template", "").format(
+            entity_name=entity_name,
+            context=context_str
+        )
         
         try:
             response = call_llm_isolated(
@@ -2483,28 +2456,14 @@ What type is this entity?"""
         verb1 = self.graph.graph.nodes[kriya1_id].get("verb", "")
         verb2 = self.graph.graph.nodes[kriya2_id].get("verb", "")
         
-        system_prompt = """You are a causal relationship detector. Given two actions and their contexts, determine if one causes the other.
-
-Return JSON:
-{
-  "is_causal": <true|false>,
-  "direction": "<forward|backward|null>",
-  "confidence": "<high|medium|low>",
-  "reasoning": "<brief explanation>"
-}
-
-Direction:
-- "forward": First action causes second action
-- "backward": Second action causes first action
-- null: No causal relationship"""
+        system_prompt = PROMPTS.get("causal_relationship_detector_prompt", "")
         
-        user_prompt = f"""Action 1: "{verb1}"
-Context 1: {text1}
-
-Action 2: "{verb2}"
-Context 2: {text2}
-
-Is there a causal relationship between these actions?"""
+        user_prompt = PROMPTS.get("causal_relationship_user_template", "").format(
+            verb1=verb1,
+            text1=text1,
+            verb2=verb2,
+            text2=text2
+        )
         
         try:
             response = call_llm_isolated(
@@ -2839,16 +2798,8 @@ class QueryPipeline:
         Returns:
             Graph relation name
         """
-        mapping = {
-            "KARTA": "HAS_KARTĀ",
-            "KARMA": "HAS_KARMA",
-            "KARANA": "USES_KARANA",
-            "SAMPRADANA": "TARGETS_SAMPRADĀNA",
-            "APADANA": "FROM_APĀDĀNA",
-            "ADHIKARANA": "LOCATED_IN",  # Default to spatial
-            "ADHIKARANA_SPATIAL": "LOCATED_IN",
-            "ADHIKARANA_TEMPORAL": "OCCURS_AT"
-        }
+        mapping = CONFIG['karaka_relation_mapping'].copy()
+        mapping["ADHIKARANA"] = "LOCATED_IN"  # Default to spatial
         return mapping.get(karaka_type, "UNKNOWN")
     
     def _expand_causal_chain(self, kriya_nodes: List[str]) -> List[str]:
@@ -2899,20 +2850,12 @@ class QueryPipeline:
         ])
         
         # Single isolated LLM call
-        system_prompt = """You are a precise answer generator. Form a natural answer using ONLY the provided context.
-
-Rules:
-- Use only information from the context
-- Keep it concise
-- Cite sources
-- Do not add information not in the context"""
+        system_prompt = PROMPTS.get("answer_generator_prompt", "")
         
-        user_prompt = f"""Question: {question}
-
-Context:
-{context}
-
-Natural Answer:"""
+        user_prompt = PROMPTS.get("answer_generator_user_template", "").format(
+            question=question,
+            context=context
+        )
         
         try:
             answer = call_llm_isolated(
@@ -2983,7 +2926,7 @@ print("\n" + "="*80)
 print("📄 STEP 1: LOADING AND EMBEDDING DOCUMENTS")
 print("="*80)
 
-docs_folder = "./data"  # Change this to your documents folder
+docs_folder = CONFIG['file_paths']['docs_folder']
 print(f"\n📂 Document folder: {docs_folder}")
 
 refined_docs = ingestion_pipeline._load_documents(docs_folder)
@@ -3085,13 +3028,8 @@ print("\n" + "="*80)
 print("CELL 14: EXECUTE QUERIES")
 print("="*80)
 
-# Test queries
-test_queries = [
-    "Who is Rama?",
-    "What did Rama do?",
-    "Where did the battle take place?",
-    "What caused the war?"
-]
+# Test queries from config
+test_queries = CONFIG['test_queries']
 
 if 'query_pipeline' in globals():
     print("\n🔍 RUNNING TEST QUERIES")
@@ -3115,11 +3053,13 @@ if 'query_pipeline' in globals():
             print(f"{result['answer']}")
             
             if result['citations']:
+                citation_limit = CONFIG['query_pipeline']['citation_limit']
+                max_text_len = CONFIG['display']['max_citation_text_length']
                 print(f"\n📚 CITATIONS ({len(result['citations'])}):")
-                for idx, citation in enumerate(result['citations'][:5], 1):  # Show first 5
-                    print(f"  [{idx}] {citation['doc_id']}, Line {citation['line_number']}: {citation['text'][:80]}...")
-                if len(result['citations']) > 5:
-                    print(f"  ... and {len(result['citations']) - 5} more")
+                for idx, citation in enumerate(result['citations'][:citation_limit], 1):
+                    print(f"  [{idx}] {citation['doc_id']}, Line {citation['line_number']}: {citation['text'][:max_text_len]}...")
+                if len(result['citations']) > citation_limit:
+                    print(f"  ... and {len(result['citations']) - citation_limit} more")
             
             if result['status'] in ['GROUNDED', 'NO_MATCH']:
                 print(f"\n✅ Status: {result['status']}")

@@ -1,0 +1,133 @@
+# Prompts for Karaka Knowledge Graph System
+# All system prompts extracted from google_colab_cells.py
+
+# Kriya Extraction Prompts (loaded from prompts.json)
+# These are referenced but defined in prompts.json file
+kriya_extraction_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_extraction_feedback_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_scoring_prompt: "LOAD_FROM_PROMPTS_JSON"
+kriya_verification_prompt: "LOAD_FROM_PROMPTS_JSON"
+
+# Query Processing Prompts (loaded from prompts.json)
+query_decomposition_prompt: "LOAD_FROM_PROMPTS_JSON"
+query_scoring_prompt: "LOAD_FROM_PROMPTS_JSON"
+query_verification_prompt: "LOAD_FROM_PROMPTS_JSON"
+
+# Sentence Splitting Prompt (loaded from prompts.json)
+sentence_split_prompt: "LOAD_FROM_PROMPTS_JSON"
+
+# Coreference Resolution Prompt (loaded from prompts.json)
+coreference_resolution_prompt: "LOAD_FROM_PROMPTS_JSON"
+
+# Embedded Prompts (currently hardcoded in the code)
+# These should be extracted to this file
+
+metaphor_resolution_prompt: |
+  You are an expert in resolving metaphorical and descriptive references to their actual entities.
+  
+  Given a metaphorical or descriptive name and context, identify the actual entity being referred to.
+  
+  Return JSON:
+  {
+    "actual_entity": "<entity name or null>",
+    "confidence": "<high|medium|low>",
+    "reasoning": "<explanation>"
+  }
+  
+  Only return an entity if confident.
+
+entity_type_classifier_prompt: |
+  You are an entity type classifier. Given an entity name and context, classify it into ONE of these types:
+  
+  - Person: Human individuals
+  - Deity: Gods, goddesses, divine beings
+  - Location: Places, cities, forests, mountains
+  - Organization: Groups, armies, kingdoms
+  - Object: Physical objects, weapons, artifacts
+  - Concept: Abstract concepts, emotions, qualities
+  - Animal: Animals, creatures
+  - Event: Named events, battles, ceremonies
+  
+  Return JSON:
+  {
+    "entity_type": "<type from list above>",
+    "confidence": "<high|medium|low>",
+    "reasoning": "<brief explanation>"
+  }
+
+causal_relationship_detector_prompt: |
+  You are a causal relationship detector. Given two actions and their contexts, determine if one causes the other.
+  
+  Return JSON:
+  {
+    "is_causal": <true|false>,
+    "direction": "<forward|backward|null>",
+    "confidence": "<high|medium|low>",
+    "reasoning": "<brief explanation>"
+  }
+  
+  Direction:
+  - "forward": First action causes second action
+  - "backward": Second action causes first action
+  - null: No causal relationship
+
+answer_generator_prompt: |
+  You are a precise answer generator. Form a natural answer using ONLY the provided context.
+  
+  Rules:
+  - Use only information from the context
+  - Keep it concise
+  - Cite sources
+  - Do not add information not in the context
+
+sentence_split_retry_prompt: |
+  Your previous sentence split contained errors. 
+  Re-split this text EXACTLY, preserving every character. 
+  Focus especially on this region: "...{context_snippet}..."
+
+sentence_split_simple_prompt: |
+  Split into sentences. Return JSON array only.
+
+# User Prompt Templates
+# These are used to format user prompts with context
+
+metaphor_resolution_user_template: |
+  Metaphorical reference: "{metaphor}"
+  
+  Context:
+  {context}
+  
+  What is the actual entity being referred to?
+
+entity_type_classifier_user_template: |
+  Entity: "{entity_name}"
+  
+  Context:
+  {context}
+  
+  What type is this entity?
+
+causal_relationship_user_template: |
+  Action 1: "{verb1}"
+  Context 1: {text1}
+  
+  Action 2: "{verb2}"
+  Context 2: {text2}
+  
+  Is there a causal relationship between these actions?
+
+answer_generator_user_template: |
+  Question: {question}
+  
+  Context:
+  {context}
+  
+  Natural Answer:
+
+coreference_resolution_user_template: |
+  Pronoun/Reference: "{hint}"
+  
+  Context:
+  {context}
+  
+  What does this refer to? Return the full entity name.
