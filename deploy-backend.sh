@@ -12,7 +12,7 @@ export $(grep -v '^#' .env | xargs)
 echo "Bootstrapping AWS environment for CDK..."
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
     --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
-    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL # <-- ADD THIS LINE
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL
 
 # 3. Deploy the serverless stack
 echo "Deploying ServerlessStack (Lambdas, DynamoDB, API GW...)"
@@ -24,4 +24,21 @@ cdk deploy ServerlessStack \
 echo "Updating frontend environment..."
 python scripts/parse_outputs.py cdk-outputs-backend.json
 
-echo "Backend deployment complete. API Gateway URL is in frontend/.env"
+# 5. Get the KG Bucket name from the outputs
+#    (This requires 'jq' to be installed: sudo apt-get install jq)
+echo "Getting KnowledgeGraphBucket name from outputs..."
+KG_BUCKET_NAME=$(jq -r '.ServerlessStack.KGBucket' ./cdk-outputs-backend.json)
+
+if [ -z "$KG_BUCKET_NAME" ] || [ "$KG_BUCKET_NAME" == "null" ]; then
+    echo "ERROR: Could not find KGBucket in cdk-outputs-backend.json"
+    echo "Please ensure ServerlessStack exports 'KGBucket' as an output."
+    exit 1
+fi
+
+# 6. Sync the prompts directory to the KG Bucket
+echo "Syncing prompts/ directory to s3://$KG_BUCKET_NAME/prompts/..."
+aws s3 sync ./prompts/ s3://$KG_BUCKET_NAME/prompts/ --delete
+
+echo "Backend deployment complete."
+echo "Prompts synced to s3://$KG_BUCKET_NAME/prompts/"
+echo "API Gateway URL is in frontend/.env"
