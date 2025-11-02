@@ -5,7 +5,8 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_iam as iam,
     aws_apigateway as apigw,
-    aws_sqs as sqs,
+    # SQS is no longer needed for this model
+    # aws_sqs as sqs,
     aws_s3_notifications as s3n,
     aws_stepfunctions as sfn,
     aws_stepfunctions_tasks as tasks,
@@ -74,7 +75,6 @@ class ServerlessStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # GSI: ByJobId (For getting all sentences in a document)
         sentences_table.add_global_secondary_index(
             index_name="ByJobId",
             partition_key=dynamodb.Attribute(
@@ -99,15 +99,12 @@ class ServerlessStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # GSI 1: ByJobId (For chronological document flow/count)
         llm_log_table.add_global_secondary_index(
             index_name="ByJobId",
             partition_key=dynamodb.Attribute(
                 name="job_id", type=dynamodb.AttributeType.STRING
             ),
         )
-
-        # CRITICAL FIX/FEATURE: GSI 2: BySentenceHash (For sentence-level observability/RAG counts)
         llm_log_table.add_global_secondary_index(
             index_name="BySentenceHash",
             partition_key=dynamodb.Attribute(
@@ -119,31 +116,10 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
-        # SQS QUEUES (Standard SQS for maximum parallelism)
+        # LAMBDA FUNCTIONS
         # ========================================
 
-        kg_tasks_dlq = sqs.Queue(
-            self,
-            "KGTasksDLQ",
-            queue_name="kg-tasks-dlq",
-            visibility_timeout=Duration.minutes(15),
-        )
-
-        kg_tasks_queue = sqs.Queue(
-            self,
-            "KGTasksQueue",
-            queue_name="kg-tasks-queue",
-            visibility_timeout=Duration.minutes(15),
-            dead_letter_queue=sqs.DeadLetterQueue(
-                max_receive_count=3, queue=kg_tasks_dlq
-            ),
-        )
-
-        # ========================================
-        # LAMBDA FUNCTIONS (L1 - L18)
-        # ========================================
-
-        # Job Management Functions (l1-l4)
+        # L1: Upload Handler (API -> S3 Pre-signed URL)
         upload_handler = _lambda.Function(
             self,
             "UploadHandler",
@@ -152,15 +128,15 @@ class ServerlessStack(Stack):
             code=_lambda.Code.from_asset(
                 os.path.join("src", "lambda_src", "job_mgmt", "l1_upload_handler")
             ),
-            timeout=Duration.minutes(15),
-            memory_size=1024,
+            timeout=Duration.minutes(1),  # Should be fast
+            memory_size=512,
             environment={
                 "JOBS_TABLE": jobs_table.table_name,
                 "RAW_BUCKET": raw_bucket.bucket_name,
             },
         )
 
-        # NOTE: This Lambda must now populate 'preview_text' and 'processed_s3_path' in DocumentJobs
+        # L2: Validate Document (S3 Trigger -> L3)
         validate_doc = _lambda.Function(
             self,
             "ValidateDoc",
@@ -169,32 +145,40 @@ class ServerlessStack(Stack):
             code=_lambda.Code.from_asset(
                 os.path.join("src", "lambda_src", "job_mgmt", "l2_validate_doc")
             ),
-            timeout=Duration.minutes(5),
-            memory_size=512,
+            timeout=Duration.minutes(15),  # For iterative verification
+            memory_size=1024,
             environment={
                 "JOBS_TABLE": jobs_table.table_name,
                 "RAW_BUCKET": raw_bucket.bucket_name,
             },
         )
 
-        # NOTE: This Lambda must query LLMCallLog for aggregated status data
-        update_doc_status = _lambda.Function(
+        # L3: Sanitize Document (L2 -> SFN) <<< NEW LAMBDA
+        sanitize_doc = _lambda.Function(
             self,
-            "UpdateDocStatus",
+            "SanitizeDoc",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="lambda_function.lambda_handler",
+            # <<< YOU MUST CREATE THIS FOLDER AND FILE
             code=_lambda.Code.from_asset(
-                os.path.join("src", "lambda_src", "job_mgmt", "l3_update_doc_status")
+                os.path.join("src", "lambda_src", "job_mgmt", "l3_sanitize_doc")
             ),
-            timeout=Duration.minutes(15),
+            timeout=Duration.minutes(15),  # For iterative sanitization
             memory_size=1024,
             environment={
                 "JOBS_TABLE": jobs_table.table_name,
-                "LLM_LOG_TABLE": llm_log_table.table_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
+                "RAW_BUCKET": raw_bucket.bucket_name,
+                "VERIFIED_BUCKET": verified_bucket.bucket_name,
+                # STATE_MACHINE_ARN added later
             },
         )
 
-        # NOTE: This Lambda must implement cursor-based pagination
+        # Grant L2 permission to invoke L3
+        validate_doc.add_environment("SANITIZE_LAMBDA_NAME", sanitize_doc.function_name)
+        sanitize_doc.grant_invoke(validate_doc)
+
+        # L4: List All Docs (API)
         list_all_docs = _lambda.Function(
             self,
             "ListAllDocs",
@@ -203,45 +187,34 @@ class ServerlessStack(Stack):
             code=_lambda.Code.from_asset(
                 os.path.join("src", "lambda_src", "job_mgmt", "l4_list_all_docs")
             ),
-            timeout=Duration.minutes(15),
-            memory_size=1024,
+            timeout=Duration.minutes(1),
+            memory_size=512,
             environment={"JOBS_TABLE": jobs_table.table_name},
         )
 
-        # Sentence Management Functions (l5-l6)
-        update_sentence_status = _lambda.Function(
+        # NOTE: L3_UpdateDocStatus is now renamed L_UpdateDocStatus
+        # This function is used by the API to GET status, not part of the main flow
+        update_doc_status_api = _lambda.Function(
             self,
-            "UpdateSentenceStatus",
+            "UpdateDocStatusApi",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="lambda_function.lambda_handler",
             code=_lambda.Code.from_asset(
-                os.path.join(
-                    "src", "lambda_src", "sentence_mgmt", "l5_update_sentence_status"
-                )
+                os.path.join("src", "lambda_src", "job_mgmt", "l3_update_doc_status")
             ),
-            timeout=Duration.minutes(15),
-            memory_size=1024,
-            environment={"SENTENCES_TABLE": sentences_table.table_name},
-        )
-
-        dedup_sentence = _lambda.Function(
-            self,
-            "DedupSentence",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset(
-                os.path.join("src", "lambda_src", "sentence_mgmt", "l6_dedup_sentence")
-            ),
-            timeout=Duration.minutes(15),
-            memory_size=1024,
+            timeout=Duration.minutes(1),
+            memory_size=512,
             environment={
-                "SENTENCES_TABLE": sentences_table.table_name,
-                "KG_QUEUE_URL": kg_tasks_queue.queue_url,
+                "JOBS_TABLE": jobs_table.table_name,
+                "LLM_LOG_TABLE": llm_log_table.table_name,
             },
         )
 
-        # LLM Gateway Functions (l7-l8)
-        # NOTE: This Lambda must log start_time, end_time (or latency_ms), model, and prompt_template
+        # L5/L6 are no longer needed, SFN handles sentence status
+        # update_sentence_status = ...
+        # dedup_sentence = ...
+
+        # L7: LLM Call (Used by SFN)
         llm_call = _lambda.Function(
             self,
             "LLMCall",
@@ -252,7 +225,6 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            reserved_concurrent_executions=3,
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "JOBS_TABLE": jobs_table.table_name,
@@ -261,6 +233,7 @@ class ServerlessStack(Stack):
             },
         )
 
+        # L8: Embedding Call (Used by SFN)
         embedding_call = _lambda.Function(
             self,
             "EmbeddingCall",
@@ -274,7 +247,27 @@ class ServerlessStack(Stack):
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
 
-        # KG Agent Functions (l9-l14)
+        # L8 (SFN Helper): Get Sentences <<< NEW LAMBDA
+        get_sentences_from_s3 = _lambda.Function(
+            self,
+            "GetSentencesFromS3",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            # <<< YOU MUST CREATE THIS FOLDER AND FILE
+            code=_lambda.Code.from_asset(
+                os.path.join(
+                    "src", "lambda_src", "job_mgmt", "l8_get_sentences_from_s3"
+                )
+            ),
+            timeout=Duration.minutes(1),
+            memory_size=512,
+            environment={
+                "VERIFIED_BUCKET": verified_bucket.bucket_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
+            },
+        )
+
+        # L9-L16: KG Agent & Graph Ops Functions (All used by SFN)
         extract_entities = _lambda.Function(
             self,
             "ExtractEntities",
@@ -290,7 +283,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
         extract_kriya = _lambda.Function(
             self,
             "ExtractKriya",
@@ -306,7 +298,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
         build_events = _lambda.Function(
             self,
             "BuildEvents",
@@ -322,7 +313,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
         audit_events = _lambda.Function(
             self,
             "AuditEvents",
@@ -338,7 +328,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
         extract_relations = _lambda.Function(
             self,
             "ExtractRelations",
@@ -354,7 +343,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
         extract_attributes = _lambda.Function(
             self,
             "ExtractAttributes",
@@ -370,8 +358,6 @@ class ServerlessStack(Stack):
                 "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
-
-        # Graph Operations Functions (l15-l16)
         graph_node_ops = _lambda.Function(
             self,
             "GraphNodeOps",
@@ -384,7 +370,6 @@ class ServerlessStack(Stack):
             memory_size=1024,
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
-
         graph_edge_ops = _lambda.Function(
             self,
             "GraphEdgeOps",
@@ -398,7 +383,7 @@ class ServerlessStack(Stack):
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
 
-        # RAG Functions (l17-l18)
+        # L17-L18: RAG Functions (API)
         retrieve_from_embedding = _lambda.Function(
             self,
             "RetrieveFromEmbedding",
@@ -409,11 +394,9 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            reserved_concurrent_executions=2,
+            reserved_concurrent_executions=2,  # As per your budget
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
-
-        # NOTE: This Lambda must enrich the response with structured references (requires LLMCallLog GSI)
         synthesize_answer = _lambda.Function(
             self,
             "SynthesizeAnswer",
@@ -424,17 +407,16 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
+            reserved_concurrent_executions=2,  # As per your budget
             environment={
                 "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
-                "LLM_LOG_TABLE": llm_log_table.table_name,  # Required for number_llm_calls
-                "SENTENCES_TABLE": sentences_table.table_name,  # Required for sentence text/metadata
+                "LLM_LOG_TABLE": llm_log_table.table_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
             },
         )
 
-        # New API Tools for Observability (l19 - l20)
-
-        # NEW: Document Processing Chain (L19)
+        # L19-L20: API Observability Tools
         get_processing_chain = _lambda.Function(
             self,
             "GetProcessingChain",
@@ -449,8 +431,6 @@ class ServerlessStack(Stack):
             memory_size=512,
             environment={"LLM_LOG_TABLE": llm_log_table.table_name},
         )
-
-        # NEW: Sentence Processing Chain (L20)
         get_sentence_chain = _lambda.Function(
             self,
             "GetSentenceChain",
@@ -465,7 +445,7 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
-        # IAM PERMISSIONS (HACKATHON CONCESSION: Broad IAM for speed)
+        # IAM PERMISSIONS
         # ========================================
 
         s3_permissions = iam.PolicyStatement(
@@ -485,8 +465,6 @@ class ServerlessStack(Stack):
                 kg_bucket.bucket_arn + "/*",
             ],
         )
-
-        # NOTE: Permissions updated to cover GSI access for new Lambdas
         dynamodb_permissions = iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
             actions=[
@@ -506,19 +484,6 @@ class ServerlessStack(Stack):
                 llm_log_table.table_arn + "/index/*",
             ],
         )
-
-        sqs_permissions = iam.PolicyStatement(
-            effect=iam.Effect.ALLOW,
-            actions=[
-                "sqs:SendMessage",
-                "sqs:ReceiveMessage",
-                "sqs:DeleteMessage",
-                "sqs:GetQueueAttributes",
-                "sqs:GetQueueUrl",
-            ],
-            resources=[kg_tasks_queue.queue_arn, kg_tasks_dlq.queue_arn],
-        )
-
         bedrock_policy = iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
             actions=["bedrock:InvokeModel"],
@@ -528,16 +493,16 @@ class ServerlessStack(Stack):
             ],
         )
 
-        # COLLECT ALL 20 FUNCTIONS
+        # Collect ALL Lambdas
         all_functions = [
             upload_handler,
             validate_doc,
-            update_doc_status,
+            sanitize_doc,
             list_all_docs,
-            update_sentence_status,
-            dedup_sentence,
+            update_doc_status_api,
             llm_call,
             embedding_call,
+            get_sentences_from_s3,
             extract_entities,
             extract_kriya,
             build_events,
@@ -549,25 +514,38 @@ class ServerlessStack(Stack):
             retrieve_from_embedding,
             synthesize_answer,
             get_processing_chain,
-            get_sentence_chain,  # NEW API TOOLS
+            get_sentence_chain,
         ]
 
+        # Apply common permissions
         for func in all_functions:
             func.add_to_role_policy(s3_permissions)
             func.add_to_role_policy(dynamodb_permissions)
 
-        dedup_sentence.add_to_role_policy(sqs_permissions)
-        llm_call.add_to_role_policy(sqs_permissions)
-
+        # Add Bedrock permissions to functions that need it
         llm_call.add_to_role_policy(bedrock_policy)
         embedding_call.add_to_role_policy(bedrock_policy)
+        # Add Bedrock for L2 (Validate) and L3 (Sanitize)
+        validate_doc.add_to_role_policy(bedrock_policy)
+        sanitize_doc.add_to_role_policy(bedrock_policy)
+        # Add Bedrock for KG agent functions
+        extract_entities.add_to_role_policy(bedrock_policy)
+        extract_kriya.add_to_role_policy(bedrock_policy)
+        build_events.add_to_role_policy(bedrock_policy)
+        audit_events.add_to_role_policy(bedrock_policy)
+        extract_relations.add_to_role_policy(bedrock_policy)
+        extract_attributes.add_to_role_policy(bedrock_policy)
+        # Add Bedrock for RAG
+        synthesize_answer.add_to_role_policy(bedrock_policy)
 
+        # Grant L18 permission to invoke L17
         retrieve_from_embedding.grant_invoke(synthesize_answer)
 
         # ========================================
         # S3 TRIGGERS
         # ========================================
 
+        # S3 PUT to raw_bucket triggers L2_ValidateDoc
         raw_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(validate_doc),
@@ -575,17 +553,27 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
-        # SQS TRIGGERS
+        # SQS TRIGGERS (None)
         # ========================================
-
-        llm_call.add_event_source(_lambda.SqsEventSource(kg_tasks_queue, batch_size=1))
 
         # ========================================
         # STEP FUNCTIONS STATE MACHINE
         # ========================================
 
-        parallel_entities_kriya = sfn.Parallel(self, "ParallelEntitiesKriya")
+        # <<< NEW SFN DEFINITION: "PER-DOCUMENT" WORKFLOW <<<
 
+        # SFN Step 1: Get array of sentences from S3
+        get_sentences_task = tasks.LambdaInvoke(
+            self,
+            "GetSentencesTask",
+            lambda_function=get_sentences_from_s3,
+            payload_response_only=True,
+            result_path="$.sentence_data",  # Puts output at {"sentence_data": {"sentences": [...]}}
+        )
+
+        # SFN Step 2: Define the sub-workflow for ONE sentence
+        # This is your original SFN definition, now inside a Map state
+        parallel_entities_kriya = sfn.Parallel(self, "ParallelEntitiesKriya")
         entities_task = tasks.LambdaInvoke(
             self,
             "EntitiesTask",
@@ -595,9 +583,7 @@ class ServerlessStack(Stack):
         kriya_task = tasks.LambdaInvoke(
             self, "KriyaTask", lambda_function=extract_kriya, payload_response_only=True
         )
-
-        parallel_entities_kriya.branch(entities_task)
-        parallel_entities_kriya.branch(kriya_task)
+        parallel_entities_kriya.branch(entities_task).branch(kriya_task)
 
         build_events_task = tasks.LambdaInvoke(
             self,
@@ -615,7 +601,6 @@ class ServerlessStack(Stack):
         parallel_relations_attributes = sfn.Parallel(
             self, "ParallelRelationsAttributes"
         )
-
         relations_task = tasks.LambdaInvoke(
             self,
             "RelationsTask",
@@ -628,9 +613,7 @@ class ServerlessStack(Stack):
             lambda_function=extract_attributes,
             payload_response_only=True,
         )
-
-        parallel_relations_attributes.branch(relations_task)
-        parallel_relations_attributes.branch(attributes_task)
+        parallel_relations_attributes.branch(relations_task).branch(attributes_task)
 
         graph_node_task = tasks.LambdaInvoke(
             self,
@@ -645,7 +628,8 @@ class ServerlessStack(Stack):
             payload_response_only=True,
         )
 
-        definition = (
+        # Chain the sub-workflow together
+        sentence_processing_flow = (
             parallel_entities_kriya.next(build_events_task)
             .next(audit_events_task)
             .next(parallel_relations_attributes)
@@ -656,6 +640,20 @@ class ServerlessStack(Stack):
             )
         )
 
+        # SFN Step 3: Create the Map state to run the sub-workflow
+        process_all_sentences_map = sfn.Map(
+            self,
+            "ProcessAllSentencesMap",
+            items_path=sfn.JsonPath.string_at("$.sentence_data.sentences"),
+            # <<< THIS SOLVES YOUR THROTTLING PROBLEM
+            max_concurrency=2,
+            result_path="$.map_results",  # Discard results
+        )
+        process_all_sentences_map.iterator(sentence_processing_flow)
+
+        # Final SFN Definition: Chain Step 1 and Step 3
+        definition = get_sentences_task.next(process_all_sentences_map)
+
         state_machine = sfn.StateMachine(
             self,
             "KarakaKGProcessing",
@@ -663,8 +661,14 @@ class ServerlessStack(Stack):
             state_machine_name="KarakaKGProcessing",
         )
 
+        # === Grant L3 (SanitizeDoc) permission to start the SFN ===
+        state_machine.grant_start_execution(sanitize_doc)
+        sanitize_doc.add_environment(
+            "STATE_MACHINE_ARN", state_machine.state_machine_arn
+        )
+
         # ========================================
-        # API GATEWAY (NEW OBSERVABILITY ENDPOINTS)
+        # API GATEWAY
         # ========================================
 
         api = apigw.RestApi(
@@ -674,36 +678,38 @@ class ServerlessStack(Stack):
             description="API for knowledge graph processing and observability",
         )
 
-        # Doc Upload
+        # POST /upload
         upload_resource = api.root.add_resource("upload")
         upload_resource.add_method("POST", apigw.LambdaIntegration(upload_handler))
 
-        # Doc Status Read (Aggregated Status)
+        # GET /status/{job_id}
         status_resource = api.root.add_resource("status")
         job_id_resource = status_resource.add_resource("{job_id}")
-        job_id_resource.add_method("GET", apigw.LambdaIntegration(update_doc_status))
+        job_id_resource.add_method(
+            "GET", apigw.LambdaIntegration(update_doc_status_api)
+        )  # Use the renamed L_UpdateDocStatus
 
-        # Query Endpoint (RAG)
+        # POST /query
         query_resource = api.root.add_resource("query")
         query_resource.add_method("POST", apigw.LambdaIntegration(synthesize_answer))
 
-        # NEW: Document Processing Chain (L19)
+        # GET /processing-chain/{doc_id}
         chain_resource = api.root.add_resource("processing-chain")
         doc_chain_resource = chain_resource.add_resource("{doc_id}")
         doc_chain_resource.add_method(
             "GET", apigw.LambdaIntegration(get_processing_chain)
         )
 
-        # NEW: Sentence Processing Chain (L20)
+        # GET /sentence-chain/{sentence_hash}
         sentence_chain_resource = api.root.add_resource("sentence-chain")
         sentence_hash_resource = sentence_chain_resource.add_resource("{sentence_hash}")
         sentence_hash_resource.add_method(
             "GET", apigw.LambdaIntegration(get_sentence_chain)
         )
 
-        # Doc Listing (L4)
+        # GET /docs
         api.root.add_resource("docs").add_method(
-            "GET", apigw.LambdaIntegration(list_all_docs)
+            "GET", apagw.LambdaIntegration(list_all_docs)
         )
 
         # ========================================
@@ -718,7 +724,6 @@ class ServerlessStack(Stack):
                 "JobsTable": jobs_table.table_name,
                 "SentencesTable": sentences_table.table_name,
                 "LLMCallLogTable": llm_log_table.table_name,
-                "KGQueueUrl": kg_tasks_queue.queue_url,
                 "ApiUrl": api.url,
                 "StateMachineArn": state_machine.state_machine_arn,
             }
