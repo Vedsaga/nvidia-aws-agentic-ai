@@ -1,6 +1,0 @@
-{
-  "EksStack": {
-    "GenerateEndpoint": "http://a72a7b27168ef4f2f825fe7aae9ce8ed-2069339664.us-east-1.elb.amazonaws.com",
-    "EmbedEndpoint": "http://ac5f3892aa1654ccbb5e6e97382f31f8-582704769.us-east-1.elb.amazonaws.com"
-  }
-}

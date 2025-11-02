@@ -1,6 +1,12 @@
 import base64
 import json
-from aws_cdk import Stack, CfnOutput, aws_eks as eks, aws_ec2 as ec2
+from aws_cdk import (
+    Stack,
+    CfnOutput,
+    aws_eks as eks,
+    aws_ec2 as ec2,
+    aws_iam as iam,
+)
 from constructs import Construct
 from aws_cdk.lambda_layer_kubectl_v28 import KubectlV28Layer
 
@@ -9,42 +15,64 @@ class EksStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        # 1. Get the NVIDIA API key from the context
+        # 1. Get NVIDIA vars from context
         nvidia_key = self.node.try_get_context("nvidia_api_key")
-        if not nvidia_key:
-            raise Exception("Provide --context nvidia_api_key=...")
+        nvidia_email = self.node.try_get_context("nvidia_email")
+        if not nvidia_key or not nvidia_email:
+            raise Exception("Provide --context nvidia_api_key=... and nvidia_email=...")
+
+        aws_account_id = self.account
 
         # 2. Create the EKS Cluster
         cluster = eks.Cluster(
             self,
             "HackathonCluster",
             version=eks.KubernetesVersion.V1_28,
-            default_capacity=0,  # We will add one custom node group
-            kubectl_layer=KubectlV28Layer(self, "KubectlLayer"),  # <--- ADD THIS LINE
+            default_capacity=0,
+            kubectl_layer=KubectlV28Layer(self, "KubectlLayer"),
         )
 
-        # 3. Create ONE Node Group (for BOTH models)
+        # 3. Add Voclabs Role to Cluster Auth
+        voclabs_role_arn = f"arn:aws:iam::{aws_account_id}:role/voclabs"
+        voclabs_role = iam.Role.from_role_arn(self, "VoclabsRole", voclabs_role_arn)
+        cluster.aws_auth.add_role_mapping(
+            voclabs_role, groups=["system:masters"], username="voclabs-user"
+        )
+
+        # 4. === FIX: Create ONE Node Group with 48GB VRAM ===
         nodegroup = cluster.add_nodegroup_capacity(
             "main-gpu-nodegroup",
-            instance_types=[ec2.InstanceType("g5.xlarge")],
-            min_size=1,  # <--- 1 Node
-            max_size=1,  # <--- 1 Node
+            # This instance has 48GB VRAM, solving our problem
+            instance_types=[ec2.InstanceType("g6e.xlarge")],
+            min_size=1,
+            max_size=1,
             desired_size=1,
         )
 
-        # 4. Create the 'nim' namespace
+        # 5. === FIX: Add NVIDIA Device Plugin (Reviewer Issue #3) ===
+        nvidia_plugin = cluster.add_helm_chart(
+            "NvidiaDevicePlugin",
+            chart="nvidia-device-plugin",
+            repository="https://nvidia.github.io/k8s-device-plugin",
+            namespace="kube-system",
+            version="0.14.1",  # A known stable version
+        )
+        nvidia_plugin.node.add_dependency(nodegroup)
+
+        # 6. Create the 'nim' namespace
         nim_namespace = cluster.add_manifest(
             "NimNamespace",
             {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "nim"}},
         )
 
-        # 5. Create the NVIDIA API secrets (same as before)
+        # 7. Create the NVIDIA API secrets
         api_secret = cluster.add_manifest(
             "NgcApiSecret",
             {
                 "apiVersion": "v1",
                 "kind": "Secret",
                 "metadata": {"name": "ngc-api", "namespace": "nim"},
+                "type": "Opaque",
                 "stringData": {"NGC_API_KEY": nvidia_key},
             },
         )
@@ -53,7 +81,7 @@ class EksStack(Stack):
         docker_auth_str = f"$oauthtoken:{nvidia_key}"
         docker_auth_b64 = base64.b64encode(docker_auth_str.encode()).decode("utf-8")
         docker_config_json = json.dumps(
-            {"auths": {"nvcr.io": {"auth": docker_auth_b64}}}
+            {"auths": {"nvcr.io": {"auth": docker_auth_b64, "email": nvidia_email}}}
         )
         docker_config_b64 = base64.b64encode(docker_config_json.encode()).decode(
             "utf-8"
@@ -71,10 +99,7 @@ class EksStack(Stack):
         )
         reg_secret.node.add_dependency(nim_namespace)
 
-        # 6. We are NOT using Helm. We define the deployments directly
-        #    so we can control the 'resources' key.
-
-        # --- Generator (8B) Deployment ---
+        # 8. Generator (8B) Deployment
         app_label_gen = {"app": "nim-generator"}
         gen_deployment = cluster.add_manifest(
             "GeneratorDeployment",
@@ -92,7 +117,7 @@ class EksStack(Stack):
                             "containers": [
                                 {
                                     "name": "nim-llm",
-                                    "image": "nvcr.io/nim/meta/Llama-3.1-Nemotron-Nano-8B-v1:1.0.0",
+                                    "image": "nvcr.io/nim/nvidia/llama-3.1-nemotron-nano-8b-v1:1.8.4",
                                     "ports": [{"containerPort": 8000}],
                                     "env": [
                                         {
@@ -105,9 +130,8 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
-                                    # CRITICAL: We DO NOT specify a 'resources'
-                                    # block for 'nvidia.com/gpu'. This makes it
-                                    # "best-effort" and allows sharing.
+                                    # === FIX: Resource Limits (Reviewer Issue #2) ===
+                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                 }
                             ],
                         },
@@ -115,9 +139,11 @@ class EksStack(Stack):
                 },
             },
         )
-        gen_deployment.node.add_dependency(nodegroup, reg_secret, api_secret)
+        gen_deployment.node.add_dependency(
+            nodegroup, reg_secret, api_secret, nvidia_plugin
+        )
 
-        # --- Embedder (1B) Deployment ---
+        # 9. Embedder (E5) Deployment
         app_label_embed = {"app": "nim-embedder"}
         embed_deployment = cluster.add_manifest(
             "EmbedderDeployment",
@@ -135,7 +161,7 @@ class EksStack(Stack):
                             "containers": [
                                 {
                                     "name": "nim-llm",
-                                    "image": "nvcr.io/nim/nvidia/llama-3.2-nv-embedqa-1b-v2:1.0.0",
+                                    "image": "nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1",
                                     "ports": [{"containerPort": 8000}],
                                     "env": [
                                         {
@@ -148,7 +174,8 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
-                                    # CRITICAL: Also no 'resources' block.
+                                    # === FIX: Resource Limits (Reviewer Issue #2) ===
+                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                 }
                             ],
                         },
@@ -156,9 +183,11 @@ class EksStack(Stack):
                 },
             },
         )
-        embed_deployment.node.add_dependency(nodegroup, reg_secret, api_secret)
+        embed_deployment.node.add_dependency(
+            nodegroup, reg_secret, api_secret, nvidia_plugin
+        )
 
-        # 7. Create LoadBalancers (same as before)
+        # 10. Create LoadBalancers
         gen_lb = cluster.add_manifest(
             "GeneratorLB",
             {
@@ -189,13 +218,13 @@ class EksStack(Stack):
         )
         embed_lb.node.add_dependency(embed_deployment)
 
-        # 8. Output the Load Balancer URLs
+        # 11. Outputs
         gen_lb_url = cluster.get_service_load_balancer_address(
             "nim-generator-lb", namespace="nim"
         )
         embed_lb_url = cluster.get_service_load_balancer_address(
             "nim-embedder-lb", namespace="nim"
         )
-
         CfnOutput(self, "GenerateEndpoint", value=f"http://{gen_lb_url}")
         CfnOutput(self, "EmbedEndpoint", value=f"http://{embed_lb_url}")
+        CfnOutput(self, "ClusterName", value=cluster.cluster_name)

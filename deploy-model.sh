@@ -11,7 +11,8 @@ export $(grep -v '^#' .env | xargs)
 # 2. Bootstrap the environment
 echo "Bootstrapping AWS environment for CDK..."
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
-    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY # <-- ADD THIS LINE
+    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL # <-- ADD THIS LINE
 
 # 3. Deploy the EKS stack
 echo "Deploying EksStack (EKS Cluster, Docker build, GPU Nodes...)"
@@ -19,7 +20,8 @@ echo "This will take 20-25 minutes."
 cdk deploy EksStack \
     --outputs-file ./cdk-outputs-model.json \
     --require-approval never \
-    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY
+    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL # <-- ADD THIS LINE
 
 # 4. Update the frontend .env file
 echo "Updating frontend environment..."

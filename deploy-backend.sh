@@ -11,7 +11,8 @@ export $(grep -v '^#' .env | xargs)
 # 2. Bootstrap the environment
 echo "Bootstrapping AWS environment for CDK..."
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
-    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY # <-- ADD THIS LINE
+    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL # <-- ADD THIS LINE
 
 # 3. Deploy the serverless stack
 echo "Deploying ServerlessStack (Lambdas, DynamoDB, API GW...)"

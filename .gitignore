@@ -1,11 +1,15 @@
-*.swp
-package-lock.json
-__pycache__
-.pytest_cache
-.venv
-*.egg-info
+# Python
+.venv/
+__pycache__/
+*.pyc
 
-# CDK asset staging directory
-.cdk.staging
-cdk.out
+# CDK
+cdk.out/
+
+# Our Generated Files (DO NOT COMMIT)
+cdk-outputs-model.json
+cdk-outputs-backend.json
+frontend/.env
+
+# Local .env (Contains secret keys)
 .env

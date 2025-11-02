@@ -1,16 +1,38 @@
 #!/bin/bash
 set -e # Exit immediately if a command fails
 
-echo "Pausing EKS GPU node to save costs..."
-echo "This scales 'main-gpu-nodegroup' to 0 nodes."
+# 1. Load credentials
+if [ ! -f .env ]; then
+    echo "ERROR: .env file not found."
+    exit 1
+fi
+export $(grep -v '^#' .env | xargs)
 
-# Assumes 'HackathonCluster' and 'main-gpu-nodegroup' are your cluster/nodegroup names
-# (These names come from your 'eks_stack.py' file)
+# 2. Find the *real* cluster name
+echo "Finding EKS cluster..."
+CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)
+if [ "$CLUSTER_NAME" == "None" ]; then
+    echo "ERROR: No EKS cluster found."
+    exit 1
+fi
+echo "Found cluster: $CLUSTER_NAME"
+
+# 3. Find the *real* nodegroup name
+echo "Finding EKS nodegroup..."
+NODEGROUP_NAME=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query "nodegroups[0]" --output text)
+if [ "$NODEGROUP_NAME" == "None" ]; then
+    echo "ERROR: No nodegroup found in cluster $CLUSTER_NAME."
+    exit 1
+fi
+echo "Found nodegroup: $NODEGROUP_NAME"
+
+# 4. Pause the cluster (scale node from 1 to 0)
+echo "Pausing EKS GPU node (scaling to 0) to save costs..."
 eksctl scale nodegroup \
-  --cluster=HackathonCluster \
-  --name=main-gpu-nodegroup \
+  --cluster=$CLUSTER_NAME \
+  --name=$NODEGROUP_NAME \
   --nodes=0 \
   --nodes-min=0 \
   --nodes-max=1
 
-echo "Model is PAUSED. Run resume-model.sh to restart."
+echo "Model is PAUSED."
