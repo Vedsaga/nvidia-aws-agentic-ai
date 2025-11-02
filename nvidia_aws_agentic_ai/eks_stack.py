@@ -159,11 +159,14 @@ class EksStack(Stack):
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/health", "port": 8000},
-                                        "initialDelaySeconds": 300,  # CHANGED: 5 minutes for model loading
-                                        "periodSeconds": 30,  # CHANGED: Check every 30s
-                                        "timeoutSeconds": 10,  # ADDED
-                                        "failureThreshold": 3,  # ADDED
+                                        "httpGet": {
+                                            "path": "/v1/models",  # CHANGED from /health
+                                            "port": 8000,
+                                        },
+                                        "initialDelaySeconds": 300,
+                                        "periodSeconds": 30,
+                                        "timeoutSeconds": 10,
+                                        "failureThreshold": 3,
                                     },
                                 }
                             ],
@@ -234,11 +237,14 @@ class EksStack(Stack):
                                         "requests": {"nvidia.com/gpu": "1"},
                                     },
                                     "readinessProbe": {
-                                        "httpGet": {"path": "/health", "port": 8000},
-                                        "initialDelaySeconds": 300,  # CHANGED: 5 minutes for model loading
-                                        "periodSeconds": 30,  # CHANGED: Check every 30s
-                                        "timeoutSeconds": 10,  # ADDED
-                                        "failureThreshold": 3,  # ADDED
+                                        "httpGet": {
+                                            "path": "/v1/models",  # CHANGED from /health
+                                            "port": 8000,
+                                        },
+                                        "initialDelaySeconds": 300,
+                                        "periodSeconds": 30,
+                                        "timeoutSeconds": 10,
+                                        "failureThreshold": 3,
                                     },
                                 }
                             ],
