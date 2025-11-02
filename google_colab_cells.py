@@ -742,6 +742,9 @@ class GSVRetryEngine:
                                             self.prompts.get("query_decomposition_prompt", ""))
         
         try:
+            if CONFIG['display'].get('show_extraction_details', False):
+                print(f"\n          📤 Extracting from: {text[:100]}...")
+            
             response = call_llm_isolated(
                 system_prompt=system_prompt,
                 user_prompt=text,
@@ -751,6 +754,9 @@ class GSVRetryEngine:
                 temperature=0.6
             )
             
+            if CONFIG['display'].get('show_extraction_details', False):
+                print(f"\n          📥 Response ({len(response)} chars): {response[:200]}...")
+            
             parsed = parse_json_response(response)
             
             if not parsed:
@@ -759,13 +765,24 @@ class GSVRetryEngine:
                 self.failure_stats['failure_reasons']['parse_error'] += 1
                 return None
             
+            # Handle different response formats
+            # Case 1: Direct list format (wrong but handle it)
+            if isinstance(parsed, list):
+                print("⚠️ Got list, wrapping...")
+                parsed = {"extractions": parsed, "confidence": 0.7}
+            
+            # Case 2: Single extraction dict (wrap in array)
+            if isinstance(parsed, dict) and "verb" in parsed and "extractions" not in parsed:
+                print("⚠️ Single extraction, wrapping...")
+                parsed = {"extractions": [parsed], "confidence": parsed.get("confidence", 0.7)}
+            
             # Extract confidence
             confidence = parsed.get("confidence", 0.5)
             
             # Validate structure
             if extraction_type == "kriya":
                 if "extractions" not in parsed or not isinstance(parsed["extractions"], list):
-                    print("❌ Invalid structure")
+                    print(f"❌ Invalid structure: {type(parsed)}, keys: {parsed.keys() if isinstance(parsed, dict) else 'N/A'}")
                     self.failure_stats['total_failures'] += 1
                     self.failure_stats['failure_reasons']['invalid_structure'] += 1
                     return None
@@ -1257,16 +1274,16 @@ class IngestionPipeline:
         
         print(f"   Found {len(text_files)} document(s)")
         
-        # Create processed folder
-        processed_folder = Path(docs_folder) / "processed"
-        processed_folder.mkdir(exist_ok=True)
+        # Get processed folder from config
+        processed_folder = Path(CONFIG['file_paths'].get('processed_folder', './data/processed'))
+        processed_folder.mkdir(parents=True, exist_ok=True)
         
         refined_docs = {}
         
         for filepath in text_files:
             doc_path = Path(filepath)
             doc_id = doc_path.stem
-            processed_file = processed_folder / f"{doc_id}_sentences.txt"
+            processed_file = processed_folder / f"{doc_id}_processed.txt"
             
             print(f"   📄 {doc_path.name}")
             
@@ -1283,10 +1300,13 @@ class IngestionPipeline:
                 # Use pipeline from sentence_split_pipeline.md
                 sentences = self._split_document_pipeline(content)
                 
-                # Save processed sentences
+                # Save processed sentences (strip leading/trailing whitespace from each)
                 with open(processed_file, 'w', encoding='utf-8') as f:
                     for sent in sentences:
-                        f.write(sent + '\n')
+                        # Strip only leading/trailing whitespace, preserve internal spacing
+                        cleaned = sent.strip()
+                        if cleaned:  # Skip empty lines
+                            f.write(cleaned + '\n')
                 print(f"      ✓ Saved to: {processed_file.name}")
             
             refined_docs[doc_id] = sentences
@@ -1405,8 +1425,8 @@ class IngestionPipeline:
                 if CONFIG['display'].get('show_split_details', False):
                     print(f"\n          ✅ {len(correct_sentences)} sentences correct, retrying remaining {len(remaining_text)} chars")
                 
-                # Recursively process remaining part
-                remaining_sentences = self._process_paragraph_single(remaining_text, f"{p_idx}R")
+                # Recursively process remaining part (strip leading space from retry)
+                remaining_sentences = self._process_paragraph_single(remaining_text.lstrip(), f"{p_idx}R")
                 return correct_sentences + remaining_sentences
             
             # Generate specific feedback for full retry

@@ -25,7 +25,8 @@ file_paths:
   db_file: "karaka_graph.json"
   graph_viz_file: "karaka_graph.gexf"
   prompts_yaml_file: "prompts.yaml"  # All prompts in YAML format
-  docs_folder: "./data"
+  docs_folder: "./data/raw"  # Raw input documents
+  processed_folder: "./data/processed"  # Processed sentence files
 
 # Graph Schema
 graph_schema:
@@ -132,6 +133,7 @@ test_queries:
 display:
   max_text_preview_length: 100
   max_citation_text_length: 80
-  show_debug_output: true  # Detailed debugging for sentence splitting
+  show_debug_output: false  # Detailed debugging for sentence splitting
   show_verifier_input: false
-  show_split_details: true  # Show LLM responses and alignment details
+  show_split_details: false  # Show LLM responses and alignment details
+  show_extraction_details: true  # Show Karaka extraction details
