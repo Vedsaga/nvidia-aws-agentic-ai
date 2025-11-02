@@ -7,40 +7,51 @@ if [ ! -f frontend/.env ]; then
     exit 1
 fi
 source frontend/.env
+export $(grep -v '^#' frontend/.env | xargs)
 
-if [ -z "$APP_GENERATE_ENDPOINT_URL" ] || [ -z "$APP_EMBED_ENDPOINT_URL" ]; then
-    echo "ERROR: Endpoint URLs not found in frontend/.env."
-    exit 1
-fi
 
 echo "--- Testing Generator Endpoint ---"
 echo "URL: $APP_GENERATE_ENDPOINT_URL"
-curl -X 'POST' \
+
+# --- GENERATOR JSON PAYLOAD ---
+cat > /tmp/generator_payload.json <<EOF
+{
+  "model": "nvidia/llama-3.1-nemotron-nano-8b-v1",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of France?"
+    }
+  ],
+  "max_tokens": 128
+}
+EOF
+
+curl -X POST \
   "$APP_GENERATE_ENDPOINT_URL/v1/chat/completions" \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "meta/llama-3.1-nemotron-nano-8b-v1",
-    "messages": [
-      {
-        "role": "user",
-        "content": "What is the capital of France?"
-      }
-    ],
-    "max_tokens": 128
-  }'
+  -d @/tmp/generator_payload.json # Reads payload from file
+
 
 echo -e "\n\n--- Testing Embedder Endpoint ---"
 echo "URL: $APP_EMBED_ENDPOINT_URL"
-curl -X 'POST' \
+
+# --- EMBEDDER JSON PAYLOAD ---
+cat > /tmp/embedder_payload.json <<EOF
+{
+  "model": "nvidia/nv-embedqa-e5-v5",
+  "input": [
+    "This is a test sentence."
+  ],
+  "input_type": "query"
+}
+EOF
+
+curl -X POST \
   "$APP_EMBED_ENDPOINT_URL/v1/embeddings" \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
-  -d '{
-    "model": "nvidia/llama-3.2-nv-embedqa-1b-v2",
-    "input": [
-      "This is a test sentence."
-    ]
-  }'
+  -d @/tmp/embedder_payload.json # Reads payload from file
 
 echo -e "\n\n--- Test complete. ---"
