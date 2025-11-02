@@ -39,23 +39,22 @@ class EksStack(Stack):
             voclabs_role, groups=["system:masters"], username="voclabs-user"
         )
 
-        # 4. === FIX: Create ONE Node Group with 48GB VRAM ===
+        # 4. Create ONE Node Group with 48GB VRAM
         nodegroup = cluster.add_nodegroup_capacity(
             "main-gpu-nodegroup",
-            # This instance has 48GB VRAM, solving our problem
             instance_types=[ec2.InstanceType("g6e.xlarge")],
             min_size=1,
             max_size=1,
             desired_size=1,
         )
 
-        # 5. === FIX: Add NVIDIA Device Plugin (Reviewer Issue #3) ===
+        # 5. Add NVIDIA Device Plugin
         nvidia_plugin = cluster.add_helm_chart(
             "NvidiaDevicePlugin",
             chart="nvidia-device-plugin",
             repository="https://nvidia.github.io/k8s-device-plugin",
             namespace="kube-system",
-            version="0.14.1",  # A known stable version
+            version="0.14.1",
         )
         nvidia_plugin.node.add_dependency(nodegroup)
 
@@ -130,8 +129,6 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
-                                    # === FIX: Resource Limits (Reviewer Issue #2) ===
-                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                 }
                             ],
                         },
@@ -174,8 +171,6 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
-                                    # === FIX: Resource Limits (Reviewer Issue #2) ===
-                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                 }
                             ],
                         },
@@ -197,7 +192,9 @@ class EksStack(Stack):
                 "spec": {
                     "type": "LoadBalancer",
                     "ports": [{"port": 80, "targetPort": 8000}],
+                    # --- THIS IS THE FIX ---
                     "selector": app_label_gen,
+                    # --- END FIX ---
                 },
             },
         )
@@ -227,4 +224,7 @@ class EksStack(Stack):
         )
         CfnOutput(self, "GenerateEndpoint", value=f"http://{gen_lb_url}")
         CfnOutput(self, "EmbedEndpoint", value=f"http://{embed_lb_url}")
+
+        # --- THIS IS THE OTHER FIX ---
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
+        # --- END FIX ---
