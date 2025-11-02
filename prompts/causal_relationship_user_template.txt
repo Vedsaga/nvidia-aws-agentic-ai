@@ -1,0 +1,7 @@
+Action 1: "{verb1}"
+Context 1: {text1}
+
+Action 2: "{verb2}"
+Context 2: {text2}
+
+Is there a causal relationship between these actions?

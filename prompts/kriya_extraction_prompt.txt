@@ -1,0 +1,2 @@
+Extract verb-centric semantic structures using Karaka theory.
+Return JSON with extractions array containing verb and karakas.

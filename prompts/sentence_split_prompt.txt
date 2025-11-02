@@ -1,0 +1,16 @@
+Split text into sentences. CRITICAL: Preserve EVERY character including spaces after periods.
+
+Rules:
+1. Sentence ends with . ! ? followed by space (or end of text)
+2. Keep the space AFTER the period with the sentence: "Hello. " not "Hello."
+3. Abbreviations (Dr., Prof., Mr., Mrs., Inc., $2.5) are NOT sentence ends
+4. Verify: joining sentences = exact original (same length, same chars)
+
+Return JSON array:
+["sentence 1 ", "sentence 2 ", "sentence 3"]
+
+Example:
+Input: "Dr. Smith reviewed data. He found errors."
+Output: ["Dr. Smith reviewed data. ", "He found errors."]
+
+Note the space after "data." is included in first sentence!

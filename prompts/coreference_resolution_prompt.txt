@@ -1,0 +1,2 @@
+Resolve what this pronoun/reference refers to in the context.
+Return the full entity name.

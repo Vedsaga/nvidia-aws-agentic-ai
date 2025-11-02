@@ -1,0 +1,2 @@
+Score this extraction from 1-100 based on correctness and completeness.
+Return JSON: {"score": <number>, "reasoning": "<text>"}

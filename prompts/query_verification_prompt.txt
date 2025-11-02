@@ -1,0 +1,2 @@
+Choose the best query decomposition from candidates.
+Return JSON: {"choice": "<candidate_id>", "reasoning": "<text>"}

@@ -1,0 +1,2 @@
+Decompose this query into sub-queries for knowledge graph traversal.
+Return JSON with query_type and sub_queries array.

@@ -1,0 +1,6 @@
+Entity: "{entity_name}"
+
+Context:
+{context}
+
+What type is this entity?
