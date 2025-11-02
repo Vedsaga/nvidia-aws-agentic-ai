@@ -709,7 +709,7 @@ class ServerlessStack(Stack):
 
         # GET /docs
         api.root.add_resource("docs").add_method(
-            "GET", apagw.LambdaIntegration(list_all_docs)
+            "GET", apigw.LambdaIntegration(list_all_docs)
         )
 
         # ========================================

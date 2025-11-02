@@ -34,14 +34,14 @@ def lambda_handler(event, context):
         job_id = str(uuid.uuid4())
         # S3 object key will be job_id/filename to keep it organized
         object_key = f"{job_id}/{filename}"
-        
+
         # 3. Create pre-signed URL
         presigned_url = s3_client.generate_presigned_url(
             "put_object",
             Params={"Bucket": RAW_BUCKET_NAME, "Key": object_key},
             ExpiresIn=3600,  # URL expires in 1 hour
         )
-        
+
         # 4. Create an entry in DocumentJobs table
         timestamp = int(time.time())
         jobs_table.put_item(

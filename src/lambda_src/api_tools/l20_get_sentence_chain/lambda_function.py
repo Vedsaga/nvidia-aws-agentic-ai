@@ -1,20 +1,21 @@
 import json
 import os
+import boto3
+
+# Boto3 clients
+# s3_client = boto3.client("s3")
+# dynamodb = boto3.resource("dynamodb")
+
+# Environment variables
+# TABLE_NAME = os.environ["TABLE_NAME"]
+# BUCKET_NAME = os.environ["BUCKET_NAME"]
 
 def lambda_handler(event, context):
     """
-    Generic handler for l14_graph_node_ops.
-    Replace this logic with the specific function implementation.
+    TODO: IMPLEMENT LOGIC
     """
-    function_name = context.function_name
-    print(f"[{function_name}] Starting execution.")
-    print(f"[{function_name}] Event received: {json.dumps(event)}")
+    print(json.dumps(event, indent=2))
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps({
-            "message": f"Successfully processed event in {function_name}",
-            "original_event": event
-        })
-    }
-
+    # Example: Propagate the input to the next SFN step
+    # Or return a response for an API Gateway
+    return event
