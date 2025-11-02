@@ -63,7 +63,6 @@ class ServerlessStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # SENTENCES TABLE: PK remains sentence_hash for deduplication
         sentences_table = dynamodb.Table(
             self,
             "SentencesTable",
@@ -75,8 +74,7 @@ class ServerlessStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
-        # CRITICAL FIX: GSI now includes a Sort Key (sentence_hash)
-        # to allow querying ALL sentences belonging to a single job_id.
+        # GSI: ByJobId (For getting all sentences in a document)
         sentences_table.add_global_secondary_index(
             index_name="ByJobId",
             partition_key=dynamodb.Attribute(
@@ -101,10 +99,22 @@ class ServerlessStack(Stack):
             removal_policy=RemovalPolicy.DESTROY,
         )
 
+        # GSI 1: ByJobId (For chronological document flow/count)
         llm_log_table.add_global_secondary_index(
             index_name="ByJobId",
             partition_key=dynamodb.Attribute(
                 name="job_id", type=dynamodb.AttributeType.STRING
+            ),
+        )
+
+        # CRITICAL FIX/FEATURE: GSI 2: BySentenceHash (For sentence-level observability/RAG counts)
+        llm_log_table.add_global_secondary_index(
+            index_name="BySentenceHash",
+            partition_key=dynamodb.Attribute(
+                name="sentence_hash", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp", type=dynamodb.AttributeType.NUMBER
             ),
         )
 
@@ -130,7 +140,7 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
-        # LAMBDA FUNCTIONS (Paths correspond to the folder structure)
+        # LAMBDA FUNCTIONS (L1 - L18)
         # ========================================
 
         # Job Management Functions (l1-l4)
@@ -150,6 +160,7 @@ class ServerlessStack(Stack):
             },
         )
 
+        # NOTE: This Lambda must now populate 'preview_text' and 'processed_s3_path' in DocumentJobs
         validate_doc = _lambda.Function(
             self,
             "ValidateDoc",
@@ -166,6 +177,7 @@ class ServerlessStack(Stack):
             },
         )
 
+        # NOTE: This Lambda must query LLMCallLog for aggregated status data
         update_doc_status = _lambda.Function(
             self,
             "UpdateDocStatus",
@@ -176,9 +188,13 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            environment={"JOBS_TABLE": jobs_table.table_name},
+            environment={
+                "JOBS_TABLE": jobs_table.table_name,
+                "LLM_LOG_TABLE": llm_log_table.table_name,
+            },
         )
 
+        # NOTE: This Lambda must implement cursor-based pagination
         list_all_docs = _lambda.Function(
             self,
             "ListAllDocs",
@@ -225,6 +241,7 @@ class ServerlessStack(Stack):
         )
 
         # LLM Gateway Functions (l7-l8)
+        # NOTE: This Lambda must log start_time, end_time (or latency_ms), model, and prompt_template
         llm_call = _lambda.Function(
             self,
             "LLMCall",
@@ -396,6 +413,7 @@ class ServerlessStack(Stack):
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
 
+        # NOTE: This Lambda must enrich the response with structured references (requires LLMCallLog GSI)
         synthesize_answer = _lambda.Function(
             self,
             "SynthesizeAnswer",
@@ -409,7 +427,41 @@ class ServerlessStack(Stack):
             environment={
                 "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
+                "LLM_LOG_TABLE": llm_log_table.table_name,  # Required for number_llm_calls
+                "SENTENCES_TABLE": sentences_table.table_name,  # Required for sentence text/metadata
             },
+        )
+
+        # New API Tools for Observability (l19 - l20)
+
+        # NEW: Document Processing Chain (L19)
+        get_processing_chain = _lambda.Function(
+            self,
+            "GetProcessingChain",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join(
+                    "src", "lambda_src", "api_tools", "l19_get_processing_chain"
+                )
+            ),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment={"LLM_LOG_TABLE": llm_log_table.table_name},
+        )
+
+        # NEW: Sentence Processing Chain (L20)
+        get_sentence_chain = _lambda.Function(
+            self,
+            "GetSentenceChain",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "api_tools", "l20_get_sentence_chain")
+            ),
+            timeout=Duration.minutes(5),
+            memory_size=512,
+            environment={"LLM_LOG_TABLE": llm_log_table.table_name},
         )
 
         # ========================================
@@ -434,6 +486,7 @@ class ServerlessStack(Stack):
             ],
         )
 
+        # NOTE: Permissions updated to cover GSI access for new Lambdas
         dynamodb_permissions = iam.PolicyStatement(
             effect=iam.Effect.ALLOW,
             actions=[
@@ -475,6 +528,7 @@ class ServerlessStack(Stack):
             ],
         )
 
+        # COLLECT ALL 20 FUNCTIONS
         all_functions = [
             upload_handler,
             validate_doc,
@@ -494,6 +548,8 @@ class ServerlessStack(Stack):
             graph_edge_ops,
             retrieve_from_embedding,
             synthesize_answer,
+            get_processing_chain,
+            get_sentence_chain,  # NEW API TOOLS
         ]
 
         for func in all_functions:
@@ -608,25 +664,47 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
-        # API GATEWAY
+        # API GATEWAY (NEW OBSERVABILITY ENDPOINTS)
         # ========================================
 
         api = apigw.RestApi(
             self,
             "KarakaKGApi",
             rest_api_name="KarakaKG Service",
-            description="API for knowledge graph processing",
+            description="API for knowledge graph processing and observability",
         )
 
+        # Doc Upload
         upload_resource = api.root.add_resource("upload")
         upload_resource.add_method("POST", apigw.LambdaIntegration(upload_handler))
 
+        # Doc Status Read (Aggregated Status)
         status_resource = api.root.add_resource("status")
         job_id_resource = status_resource.add_resource("{job_id}")
         job_id_resource.add_method("GET", apigw.LambdaIntegration(update_doc_status))
 
+        # Query Endpoint (RAG)
         query_resource = api.root.add_resource("query")
         query_resource.add_method("POST", apigw.LambdaIntegration(synthesize_answer))
+
+        # NEW: Document Processing Chain (L19)
+        chain_resource = api.root.add_resource("processing-chain")
+        doc_chain_resource = chain_resource.add_resource("{doc_id}")
+        doc_chain_resource.add_method(
+            "GET", apigw.LambdaIntegration(get_processing_chain)
+        )
+
+        # NEW: Sentence Processing Chain (L20)
+        sentence_chain_resource = api.root.add_resource("sentence-chain")
+        sentence_hash_resource = sentence_chain_resource.add_resource("{sentence_hash}")
+        sentence_hash_resource.add_method(
+            "GET", apigw.LambdaIntegration(get_sentence_chain)
+        )
+
+        # Doc Listing (L4)
+        api.root.add_resource("docs").add_method(
+            "GET", apigw.LambdaIntegration(list_all_docs)
+        )
 
         # ========================================
         # OUTPUTS
