@@ -1,4 +1,3 @@
-import base64
 import json
 from aws_cdk import (
     Stack,
@@ -39,7 +38,7 @@ class EksStack(Stack):
             voclabs_role, groups=["system:masters"], username="voclabs-user"
         )
 
-        # 4. Create ONE Node Group with 48GB VRAM
+        # 4. Create ONE Node Group with GPU instance
         nodegroup = cluster.add_nodegroup_capacity(
             "main-gpu-nodegroup",
             instance_types=[ec2.InstanceType("g6e.xlarge")],
@@ -48,13 +47,13 @@ class EksStack(Stack):
             desired_size=1,
         )
 
-        # 5. Add NVIDIA Device Plugin
+        # 5. Add NVIDIA Device Plugin (version verified for K8s 1.28)
         nvidia_plugin = cluster.add_helm_chart(
             "NvidiaDevicePlugin",
             chart="nvidia-device-plugin",
             repository="https://nvidia.github.io/k8s-device-plugin",
             namespace="kube-system",
-            version="0.14.1",
+            version="0.15.0",  # ✅ Officially supported version
         )
         nvidia_plugin.node.add_dependency(nodegroup)
 
@@ -64,7 +63,7 @@ class EksStack(Stack):
             {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "nim"}},
         )
 
-        # 7. Create the NVIDIA API secrets
+        # 7. Create NGC API Secret (for env injection)
         api_secret = cluster.add_manifest(
             "NgcApiSecret",
             {
@@ -77,35 +76,42 @@ class EksStack(Stack):
         )
         api_secret.node.add_dependency(nim_namespace)
 
-        docker_auth_str = f"$oauthtoken:{nvidia_key}"
-        docker_auth_b64 = base64.b64encode(docker_auth_str.encode()).decode("utf-8")
-        docker_config_json = json.dumps(
-            {"auths": {"nvcr.io": {"auth": docker_auth_b64, "email": nvidia_email}}}
-        )
-        docker_config_b64 = base64.b64encode(docker_config_json.encode()).decode(
-            "utf-8"
-        )
-
-        reg_secret = cluster.add_manifest(
+        # 8. Create Docker Registry Secret (using stringData - no double base64!)
+        registry_secret = cluster.add_manifest(
             "RegistrySecret",
             {
                 "apiVersion": "v1",
                 "kind": "Secret",
                 "metadata": {"name": "registry-secret", "namespace": "nim"},
                 "type": "kubernetes.io/dockerconfigjson",
-                "data": {".dockerconfigjson": docker_config_b64},
+                "stringData": {
+                    ".dockerconfigjson": json.dumps(
+                        {
+                            "auths": {
+                                "nvcr.io": {
+                                    "username": "$oauthtoken",
+                                    "password": nvidia_key,
+                                    "email": nvidia_email,
+                                }
+                            }
+                        }
+                    )
+                },
             },
         )
-        reg_secret.node.add_dependency(nim_namespace)
+        registry_secret.node.add_dependency(nim_namespace)
 
-        # 8. Generator (8B) Deployment
+        # 9. Generator (8B) Deployment
         app_label_gen = {"app": "nim-generator"}
         gen_deployment = cluster.add_manifest(
             "GeneratorDeployment",
             {
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
-                "metadata": {"name": "nim-generator-deployment", "namespace": "nim"},
+                "metadata": {
+                    "name": "nim-generator",  # ✅ Valid name (no colon or special chars)
+                    "namespace": "nim",
+                },
                 "spec": {
                     "replicas": 1,
                     "selector": {"matchLabels": app_label_gen},
@@ -116,8 +122,9 @@ class EksStack(Stack):
                             "containers": [
                                 {
                                     "name": "nim-llm",
-                                    "image": "nvcr.io/nim/nvidia/llama-3.1-nemotron-nano-8b-v1:1.8.4",
+                                    "image": "nvcr.io/nvidia/nim/llama-3.1-nemotron-nano-8b-v1:latest",
                                     "ports": [{"containerPort": 8000}],
+                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                     "env": [
                                         {
                                             "name": "NGC_API_KEY",
@@ -129,6 +136,11 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/health", "port": 8000},
+                                        "initialDelaySeconds": 30,
+                                        "periodSeconds": 10,
+                                    },
                                 }
                             ],
                         },
@@ -137,17 +149,20 @@ class EksStack(Stack):
             },
         )
         gen_deployment.node.add_dependency(
-            nodegroup, reg_secret, api_secret, nvidia_plugin
+            nodegroup, registry_secret, api_secret, nvidia_plugin
         )
 
-        # 9. Embedder (E5) Deployment
+        # 10. Embedder (E5) Deployment
         app_label_embed = {"app": "nim-embedder"}
         embed_deployment = cluster.add_manifest(
             "EmbedderDeployment",
             {
                 "apiVersion": "apps/v1",
                 "kind": "Deployment",
-                "metadata": {"name": "nim-embedder-deployment", "namespace": "nim"},
+                "metadata": {
+                    "name": "nim-embedder",  # ✅ Valid name
+                    "namespace": "nim",
+                },
                 "spec": {
                     "replicas": 1,
                     "selector": {"matchLabels": app_label_embed},
@@ -157,9 +172,10 @@ class EksStack(Stack):
                             "imagePullSecrets": [{"name": "registry-secret"}],
                             "containers": [
                                 {
-                                    "name": "nim-llm",
-                                    "image": "nvcr.io/nim/nvidia/nv-embedqa-e5-v5:1",
+                                    "name": "nim-embedder",
+                                    "image": "nvcr.io/nvidia/nim/llama-3.2-nv-embedqa-1b-v2:latest",  # ✅ Correct path
                                     "ports": [{"containerPort": 8000}],
+                                    "resources": {"limits": {"nvidia.com/gpu": "1"}},
                                     "env": [
                                         {
                                             "name": "NGC_API_KEY",
@@ -171,6 +187,11 @@ class EksStack(Stack):
                                             },
                                         }
                                     ],
+                                    "readinessProbe": {
+                                        "httpGet": {"path": "/health", "port": 8000},
+                                        "initialDelaySeconds": 30,
+                                        "periodSeconds": 10,
+                                    },
                                 }
                             ],
                         },
@@ -179,10 +200,10 @@ class EksStack(Stack):
             },
         )
         embed_deployment.node.add_dependency(
-            nodegroup, reg_secret, api_secret, nvidia_plugin
+            nodegroup, registry_secret, api_secret, nvidia_plugin
         )
 
-        # 10. Create LoadBalancers
+        # 11. LoadBalancer Services
         gen_lb = cluster.add_manifest(
             "GeneratorLB",
             {
@@ -192,9 +213,7 @@ class EksStack(Stack):
                 "spec": {
                     "type": "LoadBalancer",
                     "ports": [{"port": 80, "targetPort": 8000}],
-                    # --- THIS IS THE FIX ---
                     "selector": app_label_gen,
-                    # --- END FIX ---
                 },
             },
         )
@@ -215,7 +234,7 @@ class EksStack(Stack):
         )
         embed_lb.node.add_dependency(embed_deployment)
 
-        # 11. Outputs
+        # 12. Outputs
         gen_lb_url = cluster.get_service_load_balancer_address(
             "nim-generator-lb", namespace="nim"
         )
@@ -224,7 +243,4 @@ class EksStack(Stack):
         )
         CfnOutput(self, "GenerateEndpoint", value=f"http://{gen_lb_url}")
         CfnOutput(self, "EmbedEndpoint", value=f"http://{embed_lb_url}")
-
-        # --- THIS IS THE OTHER FIX ---
         CfnOutput(self, "ClusterName", value=cluster.cluster_name)
-        # --- END FIX ---
