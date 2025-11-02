@@ -1,40 +1,22 @@
 #!/bin/bash
-set -e # Exit immediately if a command fails
+set -e
 
-# 1. Load the new 8-hour credentials
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found."
-    exit 1
-fi
-export $(grep -v '^#' .env | xargs)
+source .env
 
-# 2. Find the *real* cluster name
-echo "Finding EKS cluster..."
 CLUSTER_NAME=$(aws eks list-clusters --query "clusters[0]" --output text)
-if [ "$CLUSTER_NAME" == "None" ]; then
-    echo "ERROR: No EKS cluster found. Have you run ./deploy-model.sh yet?"
-    exit 1
-fi
-echo "Found cluster: $CLUSTER_NAME"
+[ "$CLUSTER_NAME" = "None" ] && echo "ERROR: No cluster found" && exit 1
 
-# 3. Find the *real* nodegroup name (the new, smart step)
-echo "Finding EKS nodegroup..."
-NODEGROUP_NAME=$(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query "nodegroups[0]" --output text)
-if [ "$NODEGROUP_NAME" == "None" ]; then
-    echo "ERROR: No nodegroup found in cluster $CLUSTER_NAME."
-    exit 1
-fi
-echo "Found nodegroup: $NODEGROUP_NAME"
+echo "Resuming cluster: $CLUSTER_NAME"
+echo "Scaling to 2 nodes. This takes 8-12 minutes."
 
-# 4. Resume the cluster (scale node from 0 to 1)
-echo "Resuming EKS GPU node (scaling to 1)..."
-echo "This will take 5-10 minutes."
-eksctl scale nodegroup \
-  --cluster=$CLUSTER_NAME \
-  --name=$NODEGROUP_NAME \
-  --nodes=1 \
-  --nodes-min=1 \
-  --nodes-max=1
+# Scale ALL nodegroups to 2
+for ng in $(aws eks list-nodegroups --cluster-name $CLUSTER_NAME --query "nodegroups[]" --output text); do
+    echo "Scaling nodegroup: $ng to 2..."
+    aws eks update-nodegroup-config \
+        --cluster-name $CLUSTER_NAME \
+        --nodegroup-name $ng \
+        --scaling-config minSize=2,maxSize=2,desiredSize=2
+done
 
-echo "Model is RESUMING. Wait ~5-10 minutes for the node to be ready."
-echo "You can check status with: kubectl get pods -n nim -w"
+echo "✓ Nodes starting up..."
+echo "Wait 8-12 minutes, then run: ./check-status.sh"
