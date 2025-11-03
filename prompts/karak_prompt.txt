@@ -1,0 +1,33 @@
+Extract Karaka relationships from the sentence.
+
+THE 6 CORE KĀRAKA ROLES:
+1. Agent (Kartā): Who does the action
+2. Object (Karma): What receives the action
+3. Instrument (Karaṇa): Tool/means used
+4. Recipient (Sampradāna): Beneficiary/destination
+5. Source (Apādāna): Origin/separation point
+6. Location (Adhikaraṇa): Where/when action occurs
+
+Return JSON with karaka links:
+
+Example:
+Sentence: "Rama eats mango."
+Entities: ["Rama", "mango"]
+Verb: "eat"
+Output: {{"karakas": [{{"role": "Agent", "entity": "Rama"}}, {{"role": "Object", "entity": "mango"}}]}}
+
+Sentence: "Sita teaches Rama in school."
+Entities: ["Sita", "Rama", "school"]
+Verb: "teach"
+Output: {{"karakas": [{{"role": "Agent", "entity": "Sita"}}, {{"role": "Object", "entity": "Rama"}}, {{"role": "Location", "entity": "school"}}]}}
+
+SENTENCE:
+{SENTENCE_HERE}
+
+ENTITIES:
+{ENTITIES}
+
+VERB:
+{VERB}
+
+Return ONLY valid JSON with "karakas" array. Each karak has "role" and "entity" fields.

@@ -12,11 +12,12 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 
 def lambda_handler(event, context):
     """
-    Build NetworkX graph nodes from KG extraction results
-    Creates nodes for entities and event instances
+    Build NetworkX graph nodes from entities
+    Simple node creation for Karaka KG
     """
     
     try:
+        text = event['text']
         sentence_hash = event['hash']
         job_id = event['job_id']
         
@@ -29,44 +30,19 @@ def lambda_handler(event, context):
         )
         entities_data = json.loads(entities_obj['Body'].read())
         
-        # Load events from L11
-        events_obj = s3_client.get_object(
-            Bucket=KG_BUCKET,
-            Key=f'temp_kg/{sentence_hash}/events.json'
-        )
-        events_data = json.loads(events_obj['Body'].read())
-        
         # Create directed graph
         G = nx.DiGraph()
         
-        # Add entity nodes
-        if 'choices' in entities_data and len(entities_data['choices']) > 0:
-            content = entities_data['choices'][0]['message']['content']
-            # Parse JSON from content
-            entities_json = parse_json_from_content(content)
-            if entities_json and 'entities' in entities_json:
-                for entity in entities_json['entities']:
-                    node_id = entity['text']
-                    G.add_node(node_id, 
-                              node_type='entity',
-                              entity_type=entity['type'],
-                              sentence_hash=sentence_hash,
-                              job_id=job_id)
+        # Parse entities from LLM response
+        entities = parse_entities(entities_data)
         
-        # Add event instance nodes
-        if 'choices' in events_data and len(events_data['choices']) > 0:
-            content = events_data['choices'][0]['message']['content']
-            events_json = parse_json_from_content(content)
-            if events_json and 'event_instances' in events_json:
-                for event in events_json['event_instances']:
-                    node_id = event['instance_id']
-                    G.add_node(node_id,
-                              node_type='event_instance',
-                              kriya_concept=event.get('kriya_concept'),
-                              surface_text=event.get('surface_text'),
-                              prayoga=event.get('prayoga'),
-                              sentence_hash=sentence_hash,
-                              job_id=job_id)
+        # Add entity nodes
+        for entity in entities:
+            G.add_node(entity, 
+                      node_type='entity',
+                      sentence_hash=sentence_hash,
+                      sentence_text=text,
+                      job_id=job_id)
         
         # Serialize graph
         graph_bytes = pickle.dumps(G)
@@ -81,16 +57,31 @@ def lambda_handler(event, context):
         
         print(f"Created graph with {G.number_of_nodes()} nodes")
         
-        return {
-            'status': 'success',
-            'nodes_count': G.number_of_nodes()
-        }
+        # Return original event data for next step
+        return event
         
     except Exception as e:
         print(f"Error building graph nodes: {str(e)}")
         import traceback
         traceback.print_exc()
         return {'status': 'error', 'error': str(e)}
+
+def parse_entities(llm_response):
+    """Extract entity list from LLM response"""
+    entities = []
+    try:
+        if 'choices' in llm_response and len(llm_response['choices']) > 0:
+            content = llm_response['choices'][0]['message']['content']
+            # Try to parse JSON
+            data = parse_json_from_content(content)
+            if data:
+                if 'entities' in data:
+                    entities = [e['text'] if isinstance(e, dict) else e for e in data['entities']]
+                elif isinstance(data, list):
+                    entities = [e['text'] if isinstance(e, dict) else e for e in data]
+    except Exception as e:
+        print(f"Error parsing entities: {e}")
+    return entities
 
 def parse_json_from_content(content):
     """Extract JSON from LLM response content"""

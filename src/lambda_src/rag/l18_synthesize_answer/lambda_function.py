@@ -2,6 +2,7 @@ import json
 import os
 import boto3
 import time
+import pickle
 
 # Boto3 clients
 s3_client = boto3.client("s3")
@@ -52,38 +53,64 @@ def lambda_handler(event, context):
                 )
                 
                 if 'Item' in sentence_response:
-                    sentence_text = sentence_response['Item'].get('text', {}).get('S', '')
+                    item = sentence_response['Item']
+                    sentence_text = item.get('sentence_text', {}).get('S', '')
+                    job_id = item.get('job_id', {}).get('S', '')
+                    llm_calls = int(item.get('llm_calls_made', {}).get('N', '0'))
                     
-                    # Get KG data from S3
+                    # Get KG graph from S3
                     try:
-                        entities_obj = s3_client.get_object(
+                        graph_obj = s3_client.get_object(
                             Bucket=KG_BUCKET,
-                            Key=f'temp_kg/{sentence_hash}/entities.json'
+                            Key=f'graphs/{sentence_hash}.gpickle'
                         )
-                        entities_data = json.loads(entities_obj['Body'].read())
+                        G = pickle.loads(graph_obj['Body'].read())
                         
-                        events_obj = s3_client.get_object(
-                            Bucket=KG_BUCKET,
-                            Key=f'temp_kg/{sentence_hash}/events.json'
-                        )
-                        events_data = json.loads(events_obj['Body'].read())
+                        # Build KG snippet
+                        nodes = []
+                        for node_id in G.nodes():
+                            node_data = G.nodes[node_id]
+                            nodes.append({
+                                'id': node_id,
+                                'label': node_id,
+                                'type': node_data.get('node_type', 'entity').upper()
+                            })
+                        
+                        edges = []
+                        for source, target, edge_data in G.edges(data=True):
+                            relation = edge_data.get('relation', '')
+                            karaka_role = edge_data.get('karaka_role', '')
+                            label = f"{karaka_role}" if karaka_role else relation
+                            edges.append({
+                                'source': source,
+                                'target': target,
+                                'label': label
+                            })
                         
                         # Build context entry
-                        context_entry = f"Text: {sentence_text}\nEntities: {json.dumps(entities_data)}\nEvents: {json.dumps(events_data)}"
+                        context_entry = f"Sentence: {sentence_text}\nEntities: {', '.join([n['id'] for n in nodes])}\nRelations: {', '.join([f\"{e['source']} --[{e['label']}]--> {e['target']}\" for e in edges])}"
                         context_parts.append(context_entry)
                         
                         references.append({
+                            'sentence_text': sentence_text,
                             'sentence_hash': sentence_hash,
-                            'text': sentence_text
+                            'doc_id': job_id,
+                            'llm_calls_for_sentence': llm_calls,
+                            'kg_snippet': {
+                                'nodes': nodes,
+                                'edges': edges
+                            }
                         })
                         
                     except Exception as kg_error:
                         print(f"Error loading KG data for {sentence_hash}: {str(kg_error)}")
                         # Fallback to just text
-                        context_parts.append(f"Text: {sentence_text}")
+                        context_parts.append(f"Sentence: {sentence_text}")
                         references.append({
+                            'sentence_text': sentence_text,
                             'sentence_hash': sentence_hash,
-                            'text': sentence_text
+                            'doc_id': job_id,
+                            'llm_calls_for_sentence': llm_calls
                         })
                         
             except Exception as sentence_error:
@@ -112,6 +139,13 @@ def lambda_handler(event, context):
         
         llm_result = json.loads(llm_response['Payload'].read())
         
+        # Extract answer from LLM response
+        answer = "No answer generated"
+        if 'choices' in llm_result:
+            answer = llm_result['choices'][0]['message']['content']
+        elif 'generated_text' in llm_result:
+            answer = llm_result['generated_text']
+        
         # Format final response
         return {
             'statusCode': 200,
@@ -120,9 +154,8 @@ def lambda_handler(event, context):
                 'Access-Control-Allow-Origin': '*'
             },
             'body': json.dumps({
-                'answer': llm_result.get('generated_text', 'No answer generated'),
-                'references': references,
-                'query': query
+                'answer': answer,
+                'references': references
             })
         }
         

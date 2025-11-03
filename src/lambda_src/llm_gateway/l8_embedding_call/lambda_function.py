@@ -48,7 +48,8 @@ def lambda_handler(event, context):
                 ContentType='application/octet-stream'
             )
             
-            return {'status': 'success'}
+            # Return original event data for next step
+            return event
         else:
             raise Exception(f"Embedding API failed: {response.status_code} {response.text}")
             

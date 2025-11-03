@@ -12,21 +12,14 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 
 def lambda_handler(event, context):
     """
-    Extract relations from sentence using LLM
-    Requires entities and events from previous steps
+    Extract Karaka relations (edges) from events
+    Creates subject-verb-object relationships
     """
     
     try:
         text = event['text']
         sentence_hash = event['hash']
         job_id = event['job_id']
-        
-        # Load entities from L9
-        entities_obj = s3_client.get_object(
-            Bucket=KG_BUCKET,
-            Key=f'temp_kg/{sentence_hash}/entities.json'
-        )
-        entities_data = json.loads(entities_obj['Body'].read())
         
         # Load events from L11
         events_obj = s3_client.get_object(
@@ -35,33 +28,41 @@ def lambda_handler(event, context):
         )
         events_data = json.loads(events_obj['Body'].read())
         
-        payload = {
-            'job_id': job_id,
-            'sentence_hash': sentence_hash,
-            'stage': 'D5_Relations',
-            'prompt_name': 'relation_prompt.txt',
-            'inputs': {
-                'SENTENCE_HERE': text,
-                'ENTITY_LIST_JSON': json.dumps(entities_data, indent=2),
-                'EVENT_INSTANCES_JSON': json.dumps(events_data, indent=2)
-            }
-        }
+        # Build simple Karaka relations
+        relations = []
+        for event in events_data:
+            entities = event.get('entities', [])
+            verb = event.get('verb', '')
+            
+            # Create relations between entities via verb
+            if len(entities) >= 2 and verb:
+                relation = {
+                    'source': entities[0],
+                    'relation': verb,
+                    'target': entities[1],
+                    'sentence': text
+                }
+                relations.append(relation)
+            elif len(entities) == 1 and verb:
+                # Single entity with action
+                relation = {
+                    'source': entities[0],
+                    'relation': verb,
+                    'target': None,
+                    'sentence': text
+                }
+                relations.append(relation)
         
-        response = lambda_client.invoke(
-            FunctionName=LLM_LAMBDA,
-            Payload=json.dumps(payload)
-        )
-        
-        llm_output = json.loads(response['Payload'].read())
-        
+        # Save relations
         s3_client.put_object(
             Bucket=KG_BUCKET,
             Key=f'temp_kg/{sentence_hash}/relations.json',
-            Body=json.dumps(llm_output),
+            Body=json.dumps(relations),
             ContentType='application/json'
         )
         
-        return {'status': 'success'}
+        # Return original event data for next step
+        return event
         
     except Exception as e:
         print(f"Error extracting relations: {str(e)}")

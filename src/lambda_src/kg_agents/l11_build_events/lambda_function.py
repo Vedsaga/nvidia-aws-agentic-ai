@@ -12,8 +12,8 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 
 def lambda_handler(event, context):
     """
-    Build events from sentence using LLM
-    Requires entities and kriya from previous steps
+    Build Karaka events from sentence
+    Combines entities and kriya to form event instances with 6 Karaka roles
     """
     
     try:
@@ -35,16 +35,20 @@ def lambda_handler(event, context):
         )
         kriya_data = json.loads(kriya_obj['Body'].read())
         
-        # Prepare inputs for event prompt
+        # Parse entities and verb from LLM responses
+        entities = parse_entities(entities_data)
+        verb = parse_verb(kriya_data)
+        
+        # Extract Karaka relationships using LLM
         payload = {
             'job_id': job_id,
             'sentence_hash': sentence_hash,
-            'stage': 'D3_Events',
-            'prompt_name': 'event_instance_prompt.txt',
+            'stage': 'D2b_Karakas',
+            'prompt_name': 'karak_prompt.txt',
             'inputs': {
                 'SENTENCE_HERE': text,
-                'ENTITY_LIST_JSON': json.dumps(entities_data, indent=2),
-                'KRIYA_LIST_JSON': json.dumps(kriya_data, indent=2)
+                'ENTITIES': json.dumps(entities),
+                'VERB': verb
             }
         }
         
@@ -54,16 +58,78 @@ def lambda_handler(event, context):
         )
         
         llm_output = json.loads(response['Payload'].read())
+        karakas = parse_karakas(llm_output)
         
+        # Build Karaka event with 6 roles
+        events = [{
+            'sentence': text,
+            'entities': entities,
+            'verb': verb,
+            'karakas': karakas
+        }]
+        
+        # Save events
         s3_client.put_object(
             Bucket=KG_BUCKET,
             Key=f'temp_kg/{sentence_hash}/events.json',
-            Body=json.dumps(llm_output),
+            Body=json.dumps(events),
             ContentType='application/json'
         )
         
-        return {'status': 'success'}
+        # Return original event data for next step
+        return event
         
     except Exception as e:
         print(f"Error building events: {str(e)}")
         return {'status': 'error', 'error': str(e)}
+
+def parse_entities(llm_response):
+    """Extract entity list from LLM response"""
+    try:
+        if 'choices' in llm_response:
+            content = llm_response['choices'][0]['message']['content']
+            # Try to parse JSON
+            import re
+            content = re.sub(r'```(?:json)?', '', content)
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                data = json.loads(content[start:end+1])
+                return data.get('entities', [])
+    except Exception as e:
+        print(f"Error parsing entities: {e}")
+    return []
+
+def parse_verb(llm_response):
+    """Extract verb from LLM response"""
+    try:
+        if 'choices' in llm_response:
+            content = llm_response['choices'][0]['message']['content']
+            # Try to parse JSON
+            import re
+            content = re.sub(r'```(?:json)?', '', content)
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                data = json.loads(content[start:end+1])
+                return data.get('verb', '')
+    except Exception as e:
+        print(f"Error parsing verb: {e}")
+    return ''
+
+def parse_karakas(llm_response):
+    """Extract karaka relationships from LLM response"""
+    try:
+        if 'choices' in llm_response:
+            content = llm_response['choices'][0]['message']['content']
+            # Try to parse JSON
+            import re
+            content = re.sub(r'```(?:json)?', '', content)
+            start = content.find('{')
+            end = content.rfind('}')
+            if start != -1 and end != -1:
+                data = json.loads(content[start:end+1])
+                return data.get('karakas', [])
+    except Exception as e:
+        print(f"Error parsing karakas: {e}")
+    return []

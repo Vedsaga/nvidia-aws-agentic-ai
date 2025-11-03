@@ -13,11 +13,10 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 def lambda_handler(event, context):
     """
     Extract entities from sentence using LLM
-    Input: SFN Map item {'text': ..., 'hash': ..., 'job_id': ...}
+    Input: {'text': ..., 'hash': ..., 'job_id': ...}
     """
     
     try:
-        # Get data from SFN Map item
         text = event['text']
         sentence_hash = event['hash']
         job_id = event['job_id']
@@ -48,7 +47,8 @@ def lambda_handler(event, context):
             ContentType='application/json'
         )
         
-        return {'status': 'success'}
+        # Return original event data for next step
+        return event
         
     except Exception as e:
         print(f"Error extracting entities: {str(e)}")

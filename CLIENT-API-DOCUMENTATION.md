@@ -249,15 +249,61 @@ Access-Control-Allow-Headers: Content-Type
 
 ---
 
-## ✅ Verification Results (2024-11-03)
+## ❌ CRITICAL: KG EXTRACTION NOT WORKING (2025-11-03)
 
-**Test Job:** `39a624ec-85af-4372-ac20-3cc2c1637efe`
-- ✅ Upload API working
-- ✅ File upload to S3 working
+### Working Components:
+- ✅ Upload API (`POST /upload`)
+- ✅ File upload to S3
 - ✅ S3 trigger fires automatically
-- ✅ Status API returns correct data
-- ✅ Docs API lists all jobs
-- ✅ Sentence splitting working (2 sentences detected)
-- ⚠️ KG extraction started but progress at 0%
+- ✅ Status API (`GET /status/{job_id}`)
+- ✅ Docs API (`GET /docs`)
+- ✅ Sentence splitting (LLM call successful)
 
-**Recommendation:** APIs are ready for frontend integration. KG processing needs verification.
+### Broken Components:
+- ❌ **KG Extraction Pipeline FAILING**
+- ❌ All KG extraction steps return error: `"list indices must be integers or slices, not str"`
+- ❌ No knowledge graph data generated
+- ❌ S3 buckets empty (no graphs, no temp_kg data)
+- ❌ All sentences stuck at `kg_status: "pending"`
+
+### Test Evidence (Job: `ee4173b2-2941-4c07-83f9-2df48bdd9af3`):
+```
+Input: "Rama teaches Sita. Sita learns quickly."
+Step Function: SUCCEEDED (but with errors)
+Output: {"map_results": [[{"status": "error", "error": "list indices must be integers or slices, not str"}]]}
+```
+
+### Storage Structure (Expected but NOT Created):
+```
+s3://knowledge-graph-{account}-{region}/
+├── graphs/
+│   └── {sentence_hash}.gpickle          ← NetworkX graph (nodes + edges)
+├── temp_kg/
+│   └── {sentence_hash}/
+│       ├── entities.json                 ← Entity extraction results
+│       ├── events.json                   ← Event/Kriya extraction
+│       ├── relations.json                ← Relations between entities
+│       └── attributes.json               ← Entity attributes
+└── prompts/                              ← LLM prompts (exists)
+```
+
+### Graph Structure (When Working):
+**Nodes:**
+- Entity nodes: `{text: "Krishna", type: "PERSON"}`
+- Event nodes: `{instance_id: "evt_1", kriya_concept: "teaches"}`
+- Attribute nodes: `{value: "blue", attribute_type: "color"}`
+
+**Edges:**
+- Karaka links: Event → Entity (role: "karta", "karma", etc.)
+- Relations: Entity → Entity (type: "teaches", "fights")
+- Attributes: Entity → Attribute
+
+**Format:** NetworkX DiGraph serialized with pickle
+
+### Root Cause:
+Lambda functions in Step Function Map state receiving incorrect event structure. The Map iterator is not passing sentence objects correctly to child Lambdas.
+
+### Impact:
+**NO KNOWLEDGE GRAPH DATA IS BEING CREATED**. The system only performs sentence splitting. All downstream KG operations (entity extraction, event detection, graph building) are non-functional.
+
+**Recommendation:** DO NOT integrate frontend until KG extraction is fixed. APIs work but produce no usable output.

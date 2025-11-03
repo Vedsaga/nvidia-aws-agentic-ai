@@ -643,96 +643,72 @@ class ServerlessStack(Stack):
             result_path="$.sentence_data",  # Puts output at {"sentence_data": {"sentences": [...]}}
         )
 
-        # SFN Step 2: Add deduplication check as first step
-        check_dedup_task = tasks.LambdaInvoke(
-            self,
-            "CheckDedupTaskInvoke",
-            lambda_function=l5_check_dedup,
-            payload_response_only=True,
-        )
-        
-        # Choice state to skip processing if already done
-        dedup_choice = sfn.Choice(self, "DedupChoice")
-        skip_processing = sfn.Pass(self, "SkipProcessing", result=sfn.Result.from_object({"status": "already_processed"}))
-        
-        # SFN Step 3: Define the sub-workflow for ONE sentence
-        # This is your original SFN definition, now inside a Map state
-        parallel_entities_kriya = sfn.Parallel(self, "ParallelEntitiesKriya")
+        # SFN Step 2: Simplified KG extraction per sentence
+        # Extract entities and kriya in parallel, plus embedding
         entities_task = tasks.LambdaInvoke(
             self,
             "EntitiesTask",
             lambda_function=extract_entities,
             payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
         )
         kriya_task = tasks.LambdaInvoke(
-            self, "KriyaTask", lambda_function=extract_kriya, payload_response_only=True
+            self, "KriyaTask", 
+            lambda_function=extract_kriya, 
+            payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
         )
         embedding_task = tasks.LambdaInvoke(
             self, "EmbeddingTask",
             lambda_function=embedding_call,
-            payload_response_only=True
+            payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
         )
-        parallel_entities_kriya.branch(entities_task).branch(kriya_task).branch(embedding_task)
+        
+        parallel_extraction = sfn.Parallel(self, "ParallelExtraction", result_path=sfn.JsonPath.DISCARD)
+        parallel_extraction.branch(entities_task).branch(kriya_task).branch(embedding_task)
 
+        # Build events from entities and kriya
         build_events_task = tasks.LambdaInvoke(
             self,
             "BuildEventsTask",
             lambda_function=build_events,
             payload_response_only=True,
-        )
-        audit_events_task = tasks.LambdaInvoke(
-            self,
-            "AuditEventsTask",
-            lambda_function=audit_events,
-            payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,
         )
 
-        parallel_relations_attributes = sfn.Parallel(
-            self, "ParallelRelationsAttributes"
-        )
+        # Extract relations from events
         relations_task = tasks.LambdaInvoke(
             self,
             "RelationsTask",
             lambda_function=extract_relations,
             payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,
         )
-        attributes_task = tasks.LambdaInvoke(
-            self,
-            "AttributesTask",
-            lambda_function=extract_attributes,
-            payload_response_only=True,
-        )
-        parallel_relations_attributes.branch(relations_task).branch(attributes_task)
 
+        # Store nodes and edges in NetworkX
         graph_node_task = tasks.LambdaInvoke(
             self,
             "GraphNodeTask",
             lambda_function=graph_node_ops,
             payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,
         )
         graph_edge_task = tasks.LambdaInvoke(
             self,
             "GraphEdgeTask",
             lambda_function=graph_edge_ops,
             payload_response_only=True,
+            result_path=sfn.JsonPath.DISCARD,
         )
 
-        # Chain the sub-workflow together with deduplication
-        processing_workflow = (
-            parallel_entities_kriya.next(build_events_task)
-            .next(audit_events_task)
-            .next(parallel_relations_attributes)
-            .next(
-                sfn.Parallel(self, "GraphOps")
-                .branch(graph_node_task)
-                .branch(graph_edge_task)
-            )
-        )
-        
-        sentence_processing_flow = check_dedup_task.next(
-            dedup_choice
-            .when(sfn.Condition.string_equals("$.kg_status", "kg_done"), skip_processing)
-            .otherwise(processing_workflow)
+        # Chain: Extract -> Build Events -> Relations -> Graph Storage (sequential)
+        sentence_processing_flow = (
+            parallel_extraction
+            .next(build_events_task)
+            .next(relations_task)
+            .next(graph_node_task)
+            .next(graph_edge_task)
         )
 
         # SFN Step 3: Create the Map state to run the sub-workflow

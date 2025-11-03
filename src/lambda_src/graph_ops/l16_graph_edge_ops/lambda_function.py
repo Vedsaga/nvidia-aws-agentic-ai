@@ -12,11 +12,12 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 
 def lambda_handler(event, context):
     """
-    Add edges to NetworkX graph from KG extraction results
-    Creates edges for Karaka links, relations, and attributes
+    Add Karaka edges to NetworkX graph
+    Creates simple subject-verb-object relationships
     """
     
     try:
+        text = event['text']
         sentence_hash = event['hash']
         job_id = event['job_id']
         
@@ -29,84 +30,68 @@ def lambda_handler(event, context):
         )
         G = pickle.loads(graph_obj['Body'].read())
         
-        # Load events for Karaka links
+        # Load events with Karaka relationships
         events_obj = s3_client.get_object(
             Bucket=KG_BUCKET,
             Key=f'temp_kg/{sentence_hash}/events.json'
         )
         events_data = json.loads(events_obj['Body'].read())
         
-        # Load relations
-        relations_obj = s3_client.get_object(
-            Bucket=KG_BUCKET,
-            Key=f'temp_kg/{sentence_hash}/relations.json'
-        )
-        relations_data = json.loads(relations_obj['Body'].read())
-        
-        # Load attributes
-        attributes_obj = s3_client.get_object(
-            Bucket=KG_BUCKET,
-            Key=f'temp_kg/{sentence_hash}/attributes.json'
-        )
-        attributes_data = json.loads(attributes_obj['Body'].read())
-        
-        # Add Karaka edges from events
-        if 'choices' in events_data and len(events_data['choices']) > 0:
-            content = events_data['choices'][0]['message']['content']
-            events_json = parse_json_from_content(content)
-            if events_json and 'event_instances' in events_json:
-                for event in events_json['event_instances']:
-                    event_id = event['instance_id']
-                    if 'kāraka_links' in event or 'karaka_links' in event:
-                        links = event.get('kāraka_links') or event.get('karaka_links', [])
-                        for link in links:
-                            entity = link['entity']
-                            role = link['role']
-                            # Add edge from event to entity with Karaka role
-                            if G.has_node(event_id) and G.has_node(entity):
-                                G.add_edge(event_id, entity,
-                                          edge_type='karaka',
-                                          role=role,
-                                          reasoning=link.get('reasoning', ''))
-        
-        # Add relation edges
-        if 'choices' in relations_data and len(relations_data['choices']) > 0:
-            content = relations_data['choices'][0]['message']['content']
-            relations_json = parse_json_from_content(content)
-            if relations_json and 'relations' in relations_json:
-                for relation in relations_json['relations']:
-                    source = relation['source_node']
-                    target = relation['target_node']
-                    if G.has_node(source) and G.has_node(target):
-                        G.add_edge(source, target,
-                                  edge_type='relation',
-                                  relation_type=relation['relation_type'],
-                                  preposition=relation.get('preposition'),
-                                  reasoning=relation.get('reasoning', ''))
-        
-        # Add attribute edges
-        if 'choices' in attributes_data and len(attributes_data['choices']) > 0:
-            content = attributes_data['choices'][0]['message']['content']
-            attributes_json = parse_json_from_content(content)
-            if attributes_json and 'attributes' in attributes_json:
-                for attr in attributes_json['attributes']:
-                    target = attr['target_node']
-                    # Create attribute node
-                    attr_node_id = f"{target}_attr_{attr['value']}"
-                    G.add_node(attr_node_id,
-                              node_type='attribute',
-                              value=attr['value'],
-                              attribute_type=attr['attribute_type'])
-                    # Add edge from target to attribute
-                    if G.has_node(target):
-                        G.add_edge(target, attr_node_id,
-                                  edge_type='attribute',
-                                  reasoning=attr.get('reasoning', ''))
+        # Add edges from Karaka relationships
+        for event in events_data:
+            verb = event.get('verb', '')
+            karakas = event.get('karakas', [])
+            
+            # Find Agent and Object for primary edge
+            agent = None
+            obj = None
+            
+            for karak in karakas:
+                role = karak.get('role', '')
+                entity = karak.get('entity', '')
+                
+                if role == 'Agent':
+                    agent = entity
+                elif role == 'Object':
+                    obj = entity
+            
+            # Create primary edge: Agent -> Object with verb
+            if agent and obj:
+                if not G.has_node(agent):
+                    G.add_node(agent, node_type='entity', sentence_hash=sentence_hash)
+                if not G.has_node(obj):
+                    G.add_node(obj, node_type='entity', sentence_hash=sentence_hash)
+                
+                G.add_edge(agent, obj,
+                          edge_type='karaka',
+                          relation=verb,
+                          karaka_role='Agent->Object',
+                          sentence=text,
+                          sentence_hash=sentence_hash)
+            
+            # Add additional Karaka edges
+            for karak in karakas:
+                role = karak.get('role', '')
+                entity = karak.get('entity', '')
+                
+                if role in ['Instrument', 'Recipient', 'Source', 'Location']:
+                    # Connect to Agent if exists, otherwise to Object
+                    source_node = agent if agent else obj
+                    if source_node and entity:
+                        if not G.has_node(entity):
+                            G.add_node(entity, node_type='entity', sentence_hash=sentence_hash)
+                        
+                        G.add_edge(source_node, entity,
+                                  edge_type='karaka',
+                                  relation=verb,
+                                  karaka_role=role,
+                                  sentence=text,
+                                  sentence_hash=sentence_hash)
         
         # Serialize complete graph
         graph_bytes = pickle.dumps(G)
         
-        # Save to S3 (overwrite with complete graph)
+        # Save to S3
         s3_client.put_object(
             Bucket=KG_BUCKET,
             Key=f'graphs/{sentence_hash}.gpickle',
@@ -125,11 +110,8 @@ def lambda_handler(event, context):
             ExpressionAttributeValues={':status': {'S': 'kg_done'}}
         )
         
-        return {
-            'status': 'success',
-            'nodes_count': G.number_of_nodes(),
-            'edges_count': G.number_of_edges()
-        }
+        # Return original event data
+        return event
         
     except Exception as e:
         print(f"Error building graph edges: {str(e)}")

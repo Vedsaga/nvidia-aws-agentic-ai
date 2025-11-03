@@ -12,7 +12,8 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 
 def lambda_handler(event, context):
     """
-    Extract kriya from sentence using LLM
+    Extract kriya (verb) from sentence using LLM
+    Input: {'text': ..., 'hash': ..., 'job_id': ...}
     """
     
     try:
@@ -42,7 +43,8 @@ def lambda_handler(event, context):
             ContentType='application/json'
         )
         
-        return {'status': 'success'}
+        # Return original event data for next step
+        return event
         
     except Exception as e:
         print(f"Error extracting kriya: {str(e)}")
