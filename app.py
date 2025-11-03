@@ -18,6 +18,6 @@ app = cdk.App()
 serverless = ServerlessStack(app, "ServerlessStack", env=env)
 
 # Stack 2: EKS Cluster, 2x NodeGroups, 2x Model Endpoints
-eks = EksStack(app, "EksStack", env=env)
+# eks = EksStack(app, "EksStack", env=env)
 
 app.synth()

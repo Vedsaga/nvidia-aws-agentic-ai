@@ -5,6 +5,7 @@ from aws_cdk import (
     aws_lambda as _lambda,
     aws_iam as iam,
     aws_apigateway as apigw,
+    aws_sqs as sqs,
     # SQS is no longer needed for this model
     # aws_sqs as sqs,
     aws_s3_notifications as s3n,
@@ -12,6 +13,7 @@ from aws_cdk import (
     aws_stepfunctions_tasks as tasks,
     Duration,
     RemovalPolicy,
+    CfnOutput,
 )
 from constructs import Construct
 import os
@@ -645,11 +647,9 @@ class ServerlessStack(Stack):
             self,
             "ProcessAllSentencesMap",
             items_path=sfn.JsonPath.string_at("$.sentence_data.sentences"),
-            # <<< THIS SOLVES YOUR THROTTLING PROBLEM
             max_concurrency=2,
-            result_path="$.map_results",  # Discard results
-        )
-        process_all_sentences_map.iterator(sentence_processing_flow)
+            result_path="$.map_results",
+        ).iterator(sentence_processing_flow)
 
         # Final SFN Definition: Chain Step 1 and Step 3
         definition = get_sentences_task.next(process_all_sentences_map)
@@ -657,7 +657,8 @@ class ServerlessStack(Stack):
         state_machine = sfn.StateMachine(
             self,
             "KarakaKGProcessing",
-            definition=definition,
+            # <<< FIX 2: 'definition' is deprecated, use 'definition_body'
+            definition_body=sfn.DefinitionBody.from_chainable(definition),
             state_machine_name="KarakaKGProcessing",
         )
 
@@ -716,15 +717,12 @@ class ServerlessStack(Stack):
         # OUTPUTS
         # ========================================
 
-        self.add_outputs(
-            {
-                "RawBucket": raw_bucket.bucket_name,
-                "VerifiedBucket": verified_bucket.bucket_name,
-                "KGBucket": kg_bucket.bucket_name,
-                "JobsTable": jobs_table.table_name,
-                "SentencesTable": sentences_table.table_name,
-                "LLMCallLogTable": llm_log_table.table_name,
-                "ApiUrl": api.url,
-                "StateMachineArn": state_machine.state_machine_arn,
-            }
-        )
+        # 'self.add_outputs' is removed in CDK v2. Use CfnOutput instead.
+        CfnOutput(self, "RawBucket", value=raw_bucket.bucket_name)
+        CfnOutput(self, "VerifiedBucket", value=verified_bucket.bucket_name)
+        CfnOutput(self, "KGBucket", value=kg_bucket.bucket_name)
+        CfnOutput(self, "JobsTable", value=jobs_table.table_name)
+        CfnOutput(self, "SentencesTableNameOutput", value=sentences_table.table_name)
+        CfnOutput(self, "LLMCallLogTableOutput", value=llm_log_table.table_name)
+        CfnOutput(self, "ApiUrl", value=api.url)
+        CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)

@@ -11,5 +11,11 @@ cdk-outputs-model.json
 cdk-outputs-backend.json
 frontend/.env
 
+# Node
+*node_modules
+
 # Local .env (Contains secret keys)
 .env
+
+.kiro_command_output.tmp
+.kiro_command_output.txt
