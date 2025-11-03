@@ -1,0 +1,101 @@
+=== Fresh Upload Test ===
+
+Created test file: test-fresh.txt
+
+1. Requesting upload URL...
+{
+  "message": "Pre-signed URL generated successfully.",
+  "job_id": "ee516097-f99b-47e6-a702-7930cec9343c",
+  "pre_signed_url": "https://raw-documents-151534200269-us-east-1.s3.amazonaws.com/ee516097-f99b-47e6-a702-7930cec9343c/test-fresh.txt?AWSAccessKeyId=ASIASGSBEMXGSNXDEPAZ&Signature=VpEvERcAXXKRqKBIoo8Qr561Pjk%3D&x-amz-security-token=IQoJb3JpZ2luX2VjEJr%2F%2F%2F%2F%2F%2F%2F%2F%2F%2FwEaCXVzLWVhc3QtMSJHMEUCIBmpFtEIGrYfzQSCWqFVguF67Pzo1FJT05bua0QKb8%2FeAiEAuSc5EynteB2zpRH1Zxh02SszOf8OgyE2kUGj%2Bh8PHBcquQMIYhABGgwxNTE1MzQyMDAyNjkiDCcwWz1gDWN%2F6VhK5CqWA%2FmFtRBTdvDO03SEOI3UmWAunT6XpJxcSuLmutpeKZq2tSsqV5rOYzJj9Bt%2FDGxEYRaG4ZEqzrGt2Y0FG1RYwwQfYDJzNiv57oBRNXMfItmrjBiKsBIK7JhXti5E1uY%2F4rWLXEp07tQeRW63Pahlqtib7vdJNKZ%2BgzxYOQCRQdYz4miWw%2BL9aKGsf0h5RZsgs%2F6rMEluHye4cdYjZxSBWbefcLaQNTbL%2FmGUByzFakQ8BT0lKKfFnsycZxg6WyDSmW54nRtN%2BO8TjWwsnETFGFdpoAWdTfz6fEIMsiSiw%2FzTaLOgikak5drfpvqCfravIqcvyEa7wu%2FiMWoVB%2FNm877J1Zykrx3KdcWBBBjt7YzLsmgDKW2yQ6AUD4y99d3S2DdVjZWd1ALrL3SrBN%2FnPz2kP%2FxhP642y6dwPw8BKRZlCoimRrbl6yWtTkvLk4FHBSGwjRyTbY%2BwmDqn4Am%2BlRIfsMclXglwVsGrIPETzDr9rS3mvwmrk%2BegHgpglZLxANZKcdgcTa0akEPUMgivc3hmz8KoEKww2sSjyAY6ngFyVn3wtRjsmjhKrS85sU2IojlHR3xA6pPwQs%2Fv%2FrfQZeQkLDQY%2BhjlxNTLnu%2BXAxvMWaZUco5hsl7LrLvo%2FhXyf3oDojd%2BZMPr7u%2BvMbdkwpL8LWZaMPrVQZDEwtw%2BqtuZY4F8DrKaYlfQk2A9gecaohEBKnH6SDjztJ8wRrOg%2B%2BLsLPP%2B%2FIRbeRSIG3ieRTau%2FlSKV%2Bal%2F7uMb%2BWiLg%3D%3D&Expires=1762193514",
+  "s3_key": "ee516097-f99b-47e6-a702-7930cec9343c/test-fresh.txt"
+}
+
+Job ID: ee516097-f99b-47e6-a702-7930cec9343c
+
+2. Uploading file...
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100    17    0     0  100    17      0      9  0:00:01  0:00:01 --:--:--     9
+100    17    0     0  100    17      0      9  0:00:01  0:00:01 --:--:--     9
+
+File uploaded
+
+3. Polling status (checking every 5 seconds)...
+   Check 1...
+   Status: PENDING_UPLOAD, Progress: 0%
+   Check 2...
+   Status: processing_kg, Progress: 0.0%
+   Check 3...
+   Status: processing_kg, Progress: 0.0%
+   Check 4...
+   Status: completed, Progress: 0.0%
+
+=== Processing Complete ===
+{
+  "job_id": "ee516097-f99b-47e6-a702-7930cec9343c",
+  "filename": "test-fresh.txt",
+  "status": "completed",
+  "total_sentences": 1,
+  "completed_sentences": 0,
+  "llm_calls_made": 4,
+  "created_at": "",
+  "progress_percentage": 0.0
+}
+
+4. Testing query: Who eats mango?
+{
+  "query_id": "390630b0-2efb-4e76-a019-66a3da58c30e",
+  "question": "Who eats mango?",
+  "status": "processing"
+}
+
+5. Polling query answer...
+   Check 1...
+   Check 2...
+
+=== ANSWER READY ===
+{
+  "query_id": "390630b0-2efb-4e76-a019-66a3da58c30e",
+  "question": "Who eats mango?",
+  "status": "completed",
+  "answer": "Rama eats mango. (doc1:s4)",
+  "references": [
+    {
+      "sentence_text": "Rama eats mango. ",
+      "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+      "doc_id": "ee516097-f99b-47e6-a702-7930cec9343c",
+      "kg_snippet": {
+        "nodes": [
+          {
+            "id": "Rama",
+            "node_type": "entity",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+            "sentence_text": "Rama eats mango. ",
+            "job_id": "ee516097-f99b-47e6-a702-7930cec9343c"
+          },
+          {
+            "id": "mango",
+            "node_type": "entity",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+            "sentence_text": "Rama eats mango. ",
+            "job_id": "ee516097-f99b-47e6-a702-7930cec9343c"
+          }
+        ],
+        "edges": [
+          {
+            "source": "Rama",
+            "target": "mango",
+            "edge_type": "karaka",
+            "relation": "eat",
+            "karaka_role": "Agent->Object",
+            "sentence": "Rama eats mango. ",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c"
+          }
+        ]
+      }
+    }
+  ]
+}
