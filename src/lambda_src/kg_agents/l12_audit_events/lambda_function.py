@@ -13,6 +13,7 @@ KG_BUCKET = os.environ["KG_BUCKET"]
 def lambda_handler(event, context):
     """
     Audit events from sentence using LLM
+    Requires events from L11
     """
     
     try:
@@ -20,12 +21,22 @@ def lambda_handler(event, context):
         sentence_hash = event['hash']
         job_id = event['job_id']
         
+        # Load events from L11
+        events_obj = s3_client.get_object(
+            Bucket=KG_BUCKET,
+            Key=f'temp_kg/{sentence_hash}/events.json'
+        )
+        events_data = json.loads(events_obj['Body'].read())
+        
         payload = {
             'job_id': job_id,
             'sentence_hash': sentence_hash,
             'stage': 'D4_Audit',
             'prompt_name': 'auditor_prompt.txt',
-            'inputs': {'SENTENCE_HERE': text}
+            'inputs': {
+                'SENTENCE_HERE': text,
+                'EVENT_INSTANCES_JSON': json.dumps(events_data, indent=2)
+            }
         }
         
         response = lambda_client.invoke(

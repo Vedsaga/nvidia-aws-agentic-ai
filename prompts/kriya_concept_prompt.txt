@@ -56,4 +56,4 @@ Then, provide ONLY valid JSON in a <json> block matching this exact structure:
 IMPORTANT: Your JSON must have ONLY these fields: "canonical_form", "surface_text", "prayoga", "is_copula". Do not add extra fields.
 
 SENTENCE:
-{{SENTENCE_HERE}}
+{SENTENCE_HERE}

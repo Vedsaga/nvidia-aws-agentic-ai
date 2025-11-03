@@ -421,7 +421,10 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            environment={"KG_BUCKET": kg_bucket.bucket_name},
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
+                "SENTENCES_TABLE": sentences_table.table_name
+            },
         )
 
         # L17-L18: RAG Functions (API)

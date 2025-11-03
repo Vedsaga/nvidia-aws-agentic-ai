@@ -80,7 +80,7 @@ VALID ERROR TYPES:
 IMPORTANT: Your JSON must match one of the two structures above exactly. Do not add extra fields.
 
 SENTENCE:
-{{SENTENCE_HERE}}
+{SENTENCE_HERE}
 
 PROPOSED EVENT INSTANCES (from D2b):
-{{EVENT_INSTANCES_JSON}}
+{EVENT_INSTANCES_JSON}

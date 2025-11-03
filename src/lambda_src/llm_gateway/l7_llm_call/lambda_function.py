@@ -72,7 +72,7 @@ def lambda_handler(event, context):
             json={
                 'model': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
                 'messages': [{'role': 'user', 'content': formatted_prompt}],
-                'max_tokens': 2000,
+                'max_tokens': 12000,
                 'temperature': 0.1
             },
             timeout=300
