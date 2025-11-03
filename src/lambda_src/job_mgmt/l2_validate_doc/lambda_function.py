@@ -15,17 +15,25 @@ def lambda_handler(event, context):
     S3 trigger - validate uploaded document and invoke sanitization
     """
     
+    print(f"L2 ValidateDoc triggered. Event: {json.dumps(event)}")
+    
     try:
         # Parse S3 event
         bucket = event['Records'][0]['s3']['bucket']['name']
         key = event['Records'][0]['s3']['object']['key']
         
         # Extract job_id from S3 key (format: job_id/filename.txt)
-        job_id = key.split('/')[0]
+        # Handle both formats: "job_id/filename.txt" and "job_id.txt"
+        if '/' in key:
+            job_id = key.split('/')[0]
+        else:
+            # If no slash, the key itself might be the job_id with extension
+            job_id = key.rsplit('.', 1)[0]
         
         print(f"Processing document upload: bucket={bucket}, key={key}, job_id={job_id}")
         
         # Update job status to validating
+        print(f"Updating job {job_id} status to 'validating'")
         dynamodb.update_item(
             TableName=JOBS_TABLE,
             Key={'job_id': {'S': job_id}},
@@ -33,9 +41,11 @@ def lambda_handler(event, context):
             ExpressionAttributeNames={'#s': 'status'},
             ExpressionAttributeValues={':stat': {'S': 'validating'}}
         )
+        print(f"Job {job_id} status updated successfully")
         
         # Invoke sanitization Lambda asynchronously
-        lambda_client.invoke(
+        print(f"Invoking sanitization lambda: {SANITIZE_LAMBDA_NAME}")
+        response = lambda_client.invoke(
             FunctionName=SANITIZE_LAMBDA_NAME,
             InvocationType='Event',
             Payload=json.dumps({
@@ -44,8 +54,14 @@ def lambda_handler(event, context):
                 's3_bucket': bucket
             })
         )
+        print(f"Sanitization lambda invoked. Response: {response['StatusCode']}")
         
         print(f"Successfully triggered sanitization for job {job_id}")
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'message': 'Processing started', 'job_id': job_id})
+        }
         
     except Exception as e:
         print(f"Error in document validation: {str(e)}")

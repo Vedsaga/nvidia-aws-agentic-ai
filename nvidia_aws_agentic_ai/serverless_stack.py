@@ -172,7 +172,8 @@ class ServerlessStack(Stack):
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "RAW_BUCKET": raw_bucket.bucket_name,
                 "VERIFIED_BUCKET": verified_bucket.bucket_name,
-                # STATE_MACHINE_ARN added later
+                "KG_BUCKET": kg_bucket.bucket_name,
+                # STATE_MACHINE_ARN and LLM_CALL_LAMBDA_NAME added later
             },
         )
 
@@ -192,6 +193,23 @@ class ServerlessStack(Stack):
             timeout=Duration.minutes(1),
             memory_size=512,
             environment={"JOBS_TABLE": jobs_table.table_name},
+        )
+
+        # Manual Trigger (Bypass S3 trigger issues)
+        manual_trigger = _lambda.Function(
+            self,
+            "ManualTrigger",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "job_mgmt", "l1_manual_trigger")
+            ),
+            timeout=Duration.minutes(1),
+            memory_size=512,
+            environment={
+                "JOBS_TABLE": jobs_table.table_name,
+                "RAW_BUCKET": raw_bucket.bucket_name,
+            },
         )
 
         # NOTE: L3_UpdateDocStatus is now renamed L_UpdateDocStatus
@@ -522,6 +540,7 @@ class ServerlessStack(Stack):
             validate_doc,
             sanitize_doc,
             list_all_docs,
+            manual_trigger,
             update_doc_status_api,
             llm_call,
             embedding_call,
@@ -569,6 +588,10 @@ class ServerlessStack(Stack):
                           extract_relations, extract_attributes, validate_doc, 
                           sanitize_doc, synthesize_answer]:
             agent_func.add_environment("LLM_CALL_LAMBDA_NAME", llm_call.function_name)
+        
+        # Grant manual trigger permission to invoke L3
+        manual_trigger.add_environment("SANITIZE_LAMBDA_NAME", sanitize_doc.function_name)
+        sanitize_doc.grant_invoke(manual_trigger)
 
         # ========================================
         # S3 TRIGGERS
@@ -761,6 +784,13 @@ class ServerlessStack(Stack):
         # GET /docs
         api.root.add_resource("docs").add_method(
             "GET", apigw.LambdaIntegration(list_all_docs)
+        )
+
+        # POST /trigger/{job_id} - Manual trigger for processing
+        trigger_resource = api.root.add_resource("trigger")
+        trigger_job_resource = trigger_resource.add_resource("{job_id}")
+        trigger_job_resource.add_method(
+            "POST", apigw.LambdaIntegration(manual_trigger)
         )
 
         # ========================================

@@ -21,17 +21,42 @@ if os.path.exists(frontend_env_file):
                 env_vars[key] = val
 
 # Update the values from our CDK output
-# This assumes your CDK stack has an output named "ApiGatewayUrl"
+# Handle ServerlessStack outputs
 if "ServerlessStack" in cdk_outputs:
     stack_outputs = cdk_outputs["ServerlessStack"]
-    if "ApiGatewayUrl" in stack_outputs:
-        env_vars["APP_API_GATEWAY_URL"] = stack_outputs["ApiGatewayUrl"]
 
-# This assumes your EKS stack has an output named "EksLlmEndpoint"
+    # Map the actual output names from your CDK stack
+    if "ApiUrl" in stack_outputs:
+        env_vars["APP_API_GATEWAY_URL"] = stack_outputs["ApiUrl"]
+
+    if "KGBucket" in stack_outputs:
+        env_vars["APP_KG_BUCKET"] = stack_outputs["KGBucket"]
+
+    if "RawBucket" in stack_outputs:
+        env_vars["APP_RAW_BUCKET"] = stack_outputs["RawBucket"]
+
+    if "VerifiedBucket" in stack_outputs:
+        env_vars["APP_VERIFIED_BUCKET"] = stack_outputs["VerifiedBucket"]
+
+    if "JobsTable" in stack_outputs:
+        env_vars["APP_JOBS_TABLE"] = stack_outputs["JobsTable"]
+
+    if "StateMachineArn" in stack_outputs:
+        env_vars["APP_STATE_MACHINE_ARN"] = stack_outputs["StateMachineArn"]
+
+    if "SentencesTableNameOutput" in stack_outputs:
+        env_vars["APP_SENTENCES_TABLE"] = stack_outputs["SentencesTableNameOutput"]
+
+    if "LLMCallLogTableOutput" in stack_outputs:
+        env_vars["APP_LLM_CALL_LOG_TABLE"] = stack_outputs["LLMCallLogTableOutput"]
+
+# Handle EKS stack outputs
 if "EksStack" in cdk_outputs:
     stack_outputs = cdk_outputs["EksStack"]
+
     if "GenerateEndpoint" in stack_outputs:
         env_vars["APP_GENERATE_ENDPOINT_URL"] = stack_outputs["GenerateEndpoint"]
+
     if "EmbedEndpoint" in stack_outputs:
         env_vars["APP_EMBED_ENDPOINT_URL"] = stack_outputs["EmbedEndpoint"]
 
