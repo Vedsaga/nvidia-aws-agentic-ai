@@ -9,7 +9,9 @@ s3_client = boto3.client("s3")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
-EMBED_ENDPOINT = os.environ.get('EMBED_ENDPOINT', 'http://ac5f3892aa1654ccbb5e6e97382f31f8-582704769.us-east-1.elb.amazonaws.com:80')
+EMBED_ENDPOINT = os.environ.get('EMBED_ENDPOINT')
+if not EMBED_ENDPOINT:
+    raise ValueError("EMBED_ENDPOINT environment variable not set")
 
 def lambda_handler(event, context):
     """

@@ -488,12 +488,14 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(5),
             memory_size=1024,
+            layers=[requests_layer],
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "QUERIES_TABLE": "Queries",
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
                 "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
+                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", ""),
             },
         )
 
@@ -790,8 +792,20 @@ class ServerlessStack(Stack):
             result_path="$.map_results",
         ).iterator(sentence_processing_flow)
 
-        # Final SFN Definition: Chain Step 1 and Step 3
-        definition = get_sentences_task.next(process_all_sentences_map)
+        # Add final task to mark job as completed
+        mark_complete_task = tasks.LambdaInvoke(
+            self,
+            "MarkJobCompleteTask",
+            lambda_function=update_doc_status,
+            payload=sfn.TaskInput.from_object({
+                "job_id": sfn.JsonPath.string_at("$.job_id"),
+                "action": "mark_complete"
+            }),
+            result_path=sfn.JsonPath.DISCARD,
+        )
+
+        # Final SFN Definition: Chain Step 1 -> Step 3 -> Mark Complete
+        definition = get_sentences_task.next(process_all_sentences_map).next(mark_complete_task)
 
         state_machine = sfn.StateMachine(
             self,

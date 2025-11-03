@@ -2,6 +2,7 @@ import json
 import os
 import boto3
 import pickle
+import numpy as np
 
 s3 = boto3.client('s3')
 dynamodb = boto3.client('dynamodb')
@@ -19,65 +20,86 @@ def lambda_handler(event, context):
         query_id = event['query_id']
         question = event['question']
         
-        # 1. Use L17 retrieve lambda to get relevant sentences via embeddings
-        print(f"Calling retrieve lambda: {RETRIEVE_LAMBDA}")
-        retrieve_response = lambda_client.invoke(
-            FunctionName=RETRIEVE_LAMBDA,
-            Payload=json.dumps({'query': question, 'doc_ids': []})
-        )
+        # 1. Get relevant sentences using embedding similarity
+        print(f"Finding sentences for: {question}")
         
-        retrieve_result = json.loads(retrieve_response['Payload'].read())
-        print(f"Retrieve result: {retrieve_result}")
-        relevant_hashes = retrieve_result.get('hashes', [])[:3]
+        # Generate query embedding
+        embedding_response = generate_query_embedding(question)
+        if embedding_response is None:
+            print("Failed to generate query embedding, falling back to keyword search")
+            relevant_items = keyword_search(question)
+        else:
+            query_vector = embedding_response
+            relevant_items = embedding_search(query_vector)
+        
+        relevant_hashes = [h for h, _ in relevant_items]
         print(f"Relevant hashes: {relevant_hashes}")
-        
-        if not relevant_hashes:
-            # Fallback: get any completed sentences
-            print("No hashes from retrieve, using fallback")
-            sentences = scan_all_sentences()
-            relevant_hashes = [s['sentence_hash']['S'] for s in sentences[:3] if s.get('kg_status', {}).get('S') == 'completed']
-            print(f"Fallback hashes: {relevant_hashes}")
         
         # 2. Build context with KG from retrieved sentences
         references = []
         context_parts = []
         
-        for sent_hash in relevant_hashes:
+        for sent_hash, sent in relevant_items:
             print(f"Processing hash: {sent_hash}")
-            # Get sentence from DynamoDB
-            sent_response = dynamodb.get_item(
-                TableName=SENTENCES_TABLE,
-                Key={'sentence_hash': {'S': sent_hash}}
-            )
             
-            if 'Item' not in sent_response:
-                print(f"No item found for {sent_hash}")
-                continue
-                
-            sent = sent_response['Item']
-            sent_text = sent['sentence_text']['S']
-            print(f"Sentence text: {sent_text}")
+            kg_status = sent.get('kg_status', {}).get('S', '')
+            print(f"KG status: {kg_status}")
             
-            # Load graph
+            # Load graph to get sentence text and KG
             try:
                 graph_obj = s3.get_object(Bucket=KG_BUCKET, Key=f'graphs/{sent_hash}.gpickle')
                 G = pickle.loads(graph_obj['Body'].read())
+                
+                # Extract sentence text from graph nodes (all nodes have sentence_text)
+                sent_text = ''
+                if G.number_of_nodes() > 0:
+                    first_node = list(G.nodes(data=True))[0]
+                    sent_text = first_node[1].get('sentence_text', '')
+                
+                print(f"Sentence text from graph: {sent_text}")
                 
                 nodes = [{'id': n, **G.nodes[n]} for n in G.nodes()]
                 edges = [{'source': e[0], 'target': e[1], **e[2]} for e in G.edges(data=True)]
                 print(f"Found {len(nodes)} nodes, {len(edges)} edges")
                 
+                # Extract job_id from graph nodes
+                job_id = ''
+                if G.number_of_nodes() > 0:
+                    first_node = list(G.nodes(data=True))[0]
+                    job_id = first_node[1].get('job_id', '')
+                
+                references.append({
+                    'sentence_text': sent_text,
+                    'sentence_hash': sent_hash,
+                    'doc_id': job_id,
+                    'kg_snippet': {'nodes': nodes, 'edges': edges}
+                })
+                
+                # Build context with entities and relationships
+                entity_names = [n['id'] for n in nodes]
+                relations = [f"{e['source']}-{e.get('relation', 'related')}->{e['target']}" for e in edges]
+                
+                context_parts.append(
+                    f"Sentence: {sent_text}\n"
+                    f"Entities: {', '.join(entity_names)}\n"
+                    f"Relations: {', '.join(relations)}"
+                )
+                
+            except Exception as e:
+                print(f"Error loading graph for {sent_hash}: {e}")
+                import traceback
+                traceback.print_exc()
+                
+                # Try to get text from DynamoDB as fallback
+                sent_text = sent.get('text', {}).get('S', 'Text not available')
+                
                 references.append({
                     'sentence_text': sent_text,
                     'sentence_hash': sent_hash,
                     'doc_id': sent.get('job_id', {}).get('S', ''),
-                    'kg_snippet': {'nodes': nodes, 'edges': edges}
+                    'kg_snippet': None
                 })
-                
-                context_parts.append(f"Sentence: {sent_text}\nEntities: {', '.join([n['id'] for n in nodes])}")
-            except Exception as e:
-                print(f"Error loading graph for {sent_hash}: {e}")
-                pass
+                context_parts.append(f"Sentence: {sent_text}")
         
         print(f"Built {len(references)} references")
         
@@ -123,8 +145,8 @@ def lambda_handler(event, context):
         dynamodb.update_item(
             TableName=QUERIES_TABLE,
             Key={'query_id': {'S': query_id}},
-            UpdateExpression='SET #status = :status, error = :error',
-            ExpressionAttributeNames={'#status': 'status'},
+            UpdateExpression='SET #status = :status, #err = :error',
+            ExpressionAttributeNames={'#status': 'status', '#err': 'error'},
             ExpressionAttributeValues={
                 ':status': {'S': 'error'},
                 ':error': {'S': str(e)}
@@ -139,6 +161,97 @@ def scan_all_sentences():
     response = dynamodb.scan(TableName=SENTENCES_TABLE, Limit=100)
     items.extend(response.get('Items', []))
     return items
+
+def generate_query_embedding(query_text):
+    """Generate embedding for query"""
+    import requests
+    
+    embed_endpoint = os.environ.get('EMBED_ENDPOINT')
+    if not embed_endpoint:
+        print("EMBED_ENDPOINT not configured")
+        return None
+    
+    try:
+        response = requests.post(
+            f"{embed_endpoint}/v1/embeddings",
+            json={
+                'model': 'nvidia/llama-3.2-nv-embedqa-1b-v2',
+                'input': query_text,
+                'input_type': 'query'
+            },
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            embedding_data = response.json()
+            return np.array(embedding_data['data'][0]['embedding'], dtype=np.float32)
+    except Exception as e:
+        print(f"Error generating query embedding: {e}")
+    
+    return None
+
+def embedding_search(query_vector):
+    """Search for similar sentences using embeddings"""
+    similarities = []
+    
+    try:
+        # List all embeddings
+        response = s3.list_objects_v2(Bucket=KG_BUCKET, Prefix='embeddings/')
+        
+        for obj in response.get('Contents', []):
+            if not obj['Key'].endswith('.npy'):
+                continue
+                
+            sent_hash = obj['Key'].split('/')[-1].replace('.npy', '')
+            
+            try:
+                # Load embedding
+                emb_obj = s3.get_object(Bucket=KG_BUCKET, Key=obj['Key'])
+                sent_vector = np.frombuffer(emb_obj['Body'].read(), dtype=np.float32)
+                
+                # Cosine similarity
+                similarity = np.dot(query_vector, sent_vector) / (
+                    np.linalg.norm(query_vector) * np.linalg.norm(sent_vector)
+                )
+                
+                # Get sentence from DynamoDB
+                sent_response = dynamodb.get_item(
+                    TableName=SENTENCES_TABLE,
+                    Key={'sentence_hash': {'S': sent_hash}}
+                )
+                
+                if 'Item' in sent_response:
+                    similarities.append((similarity, sent_hash, sent_response['Item']))
+            except Exception as e:
+                print(f"Error processing {sent_hash}: {e}")
+                continue
+        
+        # Sort by similarity
+        similarities.sort(reverse=True, key=lambda x: x[0])
+        return [(h, s) for _, h, s in similarities[:3]]
+        
+    except Exception as e:
+        print(f"Error in embedding search: {e}")
+        return []
+
+def keyword_search(question):
+    """Fallback keyword search"""
+    sentences = scan_all_sentences()
+    keywords = question.lower().split()
+    scored = []
+    
+    for sent in sentences:
+        sent_text = sent.get('text', {}).get('S', '')
+        if not sent_text:
+            continue
+        
+        sent_text_lower = sent_text.lower()
+        score = sum(1 for kw in keywords if kw in sent_text_lower)
+        if score > 0:
+            scored.append((score, sent['sentence_hash']['S'], sent))
+    
+    scored.sort(reverse=True, key=lambda x: x[0])
+    return [(h, s) for _, h, s in scored[:3]]
 
 def extract_answer(llm_response):
     """Extract answer from LLM response"""

@@ -12,7 +12,9 @@ dynamodb = boto3.client("dynamodb")
 # Environment variables
 LOG_TABLE = os.environ['LLM_CALL_LOG_TABLE']
 KG_BUCKET = os.environ['KG_BUCKET']
-GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT', 'http://a72a7b27168ef4f2f825fe7aae9ce8ed-2069339664.us-east-1.elb.amazonaws.com')
+GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT')
+if not GENERATE_ENDPOINT:
+    raise ValueError("GENERATE_ENDPOINT environment variable not set")
 
 def lambda_handler(event, context):
     """

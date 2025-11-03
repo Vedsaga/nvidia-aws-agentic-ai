@@ -12,10 +12,27 @@ LLM_LOG_TABLE = os.environ["LLM_LOG_TABLE"]
 def lambda_handler(event, context):
     """
     GET /docs/{job_id}/status - Get document processing status
+    OR called from Step Function with action: mark_complete
     """
     
     try:
-        # Get job_id from path parameters
+        # Check if called from Step Function
+        if 'action' in event and event['action'] == 'mark_complete':
+            job_id = event['job_id']
+            
+            # Update job status to completed
+            dynamodb.update_item(
+                TableName=JOBS_TABLE,
+                Key={'job_id': {'S': job_id}},
+                UpdateExpression='SET #status = :status',
+                ExpressionAttributeNames={'#status': 'status'},
+                ExpressionAttributeValues={':status': {'S': 'completed'}}
+            )
+            
+            print(f"Marked job {job_id} as completed")
+            return {'status': 'completed', 'job_id': job_id}
+        
+        # Get job_id from path parameters (API Gateway call)
         job_id = event['pathParameters']['job_id']
         
         # Get document info
