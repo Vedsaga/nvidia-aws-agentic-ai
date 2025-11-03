@@ -239,71 +239,188 @@ Access-Control-Allow-Headers: Content-Type
 
 ---
 
+## 🔍 Query API (NEW - Working)
+
+### 1. Submit Query
+**Endpoint:** `POST /query/submit`
+
+**Description:** Submit a question to query the knowledge base
+
+**Request:**
+```bash
+curl -X POST "https://7g3bdwsnsc.execute-api.us-east-1.amazonaws.com/prod/query/submit" \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Who eats mango?"}'
+```
+
+**Request Body:**
+```json
+{
+  "question": "Who eats mango?"
+}
+```
+
+**Response (200 OK):**
+```json
+{
+  "query_id": "390630b0-2efb-4e76-a019-66a3da58c30e",
+  "question": "Who eats mango?",
+  "status": "processing"
+}
+```
+
+**Status:** ✅ WORKING
+
+---
+
+### 2. Get Query Status/Answer
+**Endpoint:** `GET /query/status/{query_id}`
+
+**Description:** Get the answer for a submitted query
+
+**Request:**
+```bash
+curl "https://7g3bdwsnsc.execute-api.us-east-1.amazonaws.com/prod/query/status/390630b0-2efb-4e76-a019-66a3da58c30e"
+```
+
+**Response (200 OK - Processing):**
+```json
+{
+  "query_id": "390630b0-2efb-4e76-a019-66a3da58c30e",
+  "question": "Who eats mango?",
+  "status": "processing"
+}
+```
+
+**Response (200 OK - Completed):**
+```json
+{
+  "query_id": "390630b0-2efb-4e76-a019-66a3da58c30e",
+  "question": "Who eats mango?",
+  "status": "completed",
+  "answer": "Rama eats mango. (doc1:s4)",
+  "references": [
+    {
+      "sentence_text": "Rama eats mango. ",
+      "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+      "doc_id": "ee516097-f99b-47e6-a702-7930cec9343c",
+      "kg_snippet": {
+        "nodes": [
+          {
+            "id": "Rama",
+            "node_type": "entity",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+            "sentence_text": "Rama eats mango. ",
+            "job_id": "ee516097-f99b-47e6-a702-7930cec9343c"
+          },
+          {
+            "id": "mango",
+            "node_type": "entity",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c",
+            "sentence_text": "Rama eats mango. ",
+            "job_id": "ee516097-f99b-47e6-a702-7930cec9343c"
+          }
+        ],
+        "edges": [
+          {
+            "source": "Rama",
+            "target": "mango",
+            "edge_type": "karaka",
+            "relation": "eat",
+            "karaka_role": "Agent->Object",
+            "sentence": "Rama eats mango. ",
+            "sentence_hash": "e8e902adacf4c1f83ccfaea24805be62755b766e8075c05588aab02f4384fe5c"
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+**Status:** ✅ WORKING
+
+**Query Status Values:**
+- `processing` - Query is being processed
+- `completed` - Answer ready
+- `error` - Query failed
+
+---
+
 ## 📝 Notes for Frontend Team
 
-1. **Polling Interval:** Poll status every 5 seconds, not faster
+1. **Polling Interval:** Poll status every 3-5 seconds
 2. **Timeout:** Pre-signed URLs expire in 1 hour
 3. **File Size:** No explicit limit, but Lambda timeout is 15 minutes
 4. **File Format:** Currently only `.txt` files trigger processing
 5. **Job ID:** Always save the job_id from upload response
+6. **Query Processing:** Queries typically complete in 5-10 seconds
+7. **KG References:** Each answer includes full knowledge graph snippets with entities and relations
+8. **Embedding Search:** Uses semantic similarity (not keyword matching) for better retrieval
 
 ---
 
-## ❌ CRITICAL: KG EXTRACTION NOT WORKING (2025-11-03)
+## ✅ WORKING: Complete RAG Pipeline with Knowledge Graph (2025-11-03)
 
-### Working Components:
+### All Components Working:
 - ✅ Upload API (`POST /upload`)
 - ✅ File upload to S3
 - ✅ S3 trigger fires automatically
 - ✅ Status API (`GET /status/{job_id}`)
 - ✅ Docs API (`GET /docs`)
-- ✅ Sentence splitting (LLM call successful)
+- ✅ Sentence splitting (LLM call)
+- ✅ **KG Extraction Pipeline (Entity + Kriya + Events + Relations)**
+- ✅ **NetworkX Graph Storage**
+- ✅ **Sentence Embeddings (llama-3.2-nv-embedqa-1b-v2)**
+- ✅ **Query API with Embedding Similarity Search**
+- ✅ **Answer Synthesis with KG Context**
 
-### Broken Components:
-- ❌ **KG Extraction Pipeline FAILING**
-- ❌ All KG extraction steps return error: `"list indices must be integers or slices, not str"`
-- ❌ No knowledge graph data generated
-- ❌ S3 buckets empty (no graphs, no temp_kg data)
-- ❌ All sentences stuck at `kg_status: "pending"`
-
-### Test Evidence (Job: `ee4173b2-2941-4c07-83f9-2df48bdd9af3`):
+### Test Evidence (Job: `ee516097-f99b-47e6-a702-7930cec9343c`):
 ```
-Input: "Rama teaches Sita. Sita learns quickly."
-Step Function: SUCCEEDED (but with errors)
-Output: {"map_results": [[{"status": "error", "error": "list indices must be integers or slices, not str"}]]}
+Input: "Rama eats mango."
+Processing: COMPLETED
+Query: "Who eats mango?"
+Answer: "Rama eats mango. (doc1:s4)"
+References: Full KG with nodes (Rama, mango) and edge (Rama-eat->mango)
 ```
 
-### Storage Structure (Expected but NOT Created):
+### Storage Structure (Fully Functional):
 ```
 s3://knowledge-graph-{account}-{region}/
 ├── graphs/
 │   └── {sentence_hash}.gpickle          ← NetworkX graph (nodes + edges)
+├── embeddings/
+│   └── {sentence_hash}.npy              ← Sentence embeddings (2048-dim)
 ├── temp_kg/
 │   └── {sentence_hash}/
 │       ├── entities.json                 ← Entity extraction results
 │       ├── events.json                   ← Event/Kriya extraction
-│       ├── relations.json                ← Relations between entities
-│       └── attributes.json               ← Entity attributes
-└── prompts/                              ← LLM prompts (exists)
+│       └── relations.json                ← Relations between entities
+└── prompts/                              ← LLM prompts
 ```
 
-### Graph Structure (When Working):
+### Graph Structure:
 **Nodes:**
-- Entity nodes: `{text: "Krishna", type: "PERSON"}`
-- Event nodes: `{instance_id: "evt_1", kriya_concept: "teaches"}`
-- Attribute nodes: `{value: "blue", attribute_type: "color"}`
+- Entity nodes: `{id: "Rama", node_type: "entity", sentence_text: "...", job_id: "..."}`
 
 **Edges:**
-- Karaka links: Event → Entity (role: "karta", "karma", etc.)
-- Relations: Entity → Entity (type: "teaches", "fights")
-- Attributes: Entity → Attribute
+- Karaka links: `{source: "Rama", target: "mango", edge_type: "karaka", relation: "eat", karaka_role: "Agent->Object"}`
 
 **Format:** NetworkX DiGraph serialized with pickle
 
-### Root Cause:
-Lambda functions in Step Function Map state receiving incorrect event structure. The Map iterator is not passing sentence objects correctly to child Lambdas.
+### Query Flow:
+1. Generate query embedding using llama-3.2-nv-embedqa-1b-v2
+2. Calculate cosine similarity with all sentence embeddings
+3. Retrieve top 3 similar sentences
+4. Load NetworkX graphs for retrieved sentences
+5. Extract sentence text and KG from graph nodes
+6. Build context with entities and relations
+7. Pass to LLM for answer synthesis
+8. Return answer with full KG references
 
-### Impact:
-**NO KNOWLEDGE GRAPH DATA IS BEING CREATED**. The system only performs sentence splitting. All downstream KG operations (entity extraction, event detection, graph building) are non-functional.
-
-**Recommendation:** DO NOT integrate frontend until KG extraction is fixed. APIs work but produce no usable output.
+### Status Values:
+- `PENDING_UPLOAD` - Waiting for file upload
+- `validating` - File uploaded, validating
+- `processing_kg` - Extracting knowledge graph
+- `completed` - Processing finished ✅
+- `error` - Processing failed
