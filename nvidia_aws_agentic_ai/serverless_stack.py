@@ -796,7 +796,7 @@ class ServerlessStack(Stack):
         mark_complete_task = tasks.LambdaInvoke(
             self,
             "MarkJobCompleteTask",
-            lambda_function=update_doc_status,
+            lambda_function=update_doc_status_api,
             payload=sfn.TaskInput.from_object({
                 "job_id": sfn.JsonPath.string_at("$.job_id"),
                 "action": "mark_complete"
