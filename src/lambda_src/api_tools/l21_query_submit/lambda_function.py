@@ -5,7 +5,9 @@ import uuid
 from datetime import datetime
 
 dynamodb = boto3.client('dynamodb')
+lambda_client = boto3.client('lambda')
 QUERIES_TABLE = os.environ.get('QUERIES_TABLE', 'Queries')
+QUERY_PROCESSOR_LAMBDA = os.environ.get('QUERY_PROCESSOR_LAMBDA')
 
 def lambda_handler(event, context):
     """Submit a query and return query_id for polling"""
@@ -35,15 +37,12 @@ def lambda_handler(event, context):
             }
         )
         
-        # Trigger Step Function for query processing
-        sfn = boto3.client('stepfunctions')
-        sfn_arn = os.environ.get('QUERY_SFN_ARN')
-        
-        if sfn_arn:
-            sfn.start_execution(
-                stateMachineArn=sfn_arn,
-                input=json.dumps({'query_id': query_id, 'question': question})
-            )
+        # Invoke query processor asynchronously
+        lambda_client.invoke(
+            FunctionName=QUERY_PROCESSOR_LAMBDA,
+            InvocationType='Event',
+            Payload=json.dumps({'query_id': query_id, 'question': question})
+        )
         
         return {
             'statusCode': 200,

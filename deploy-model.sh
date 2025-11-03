@@ -27,4 +27,4 @@ cdk deploy EksStack \
 echo "Updating frontend environment..."
 python scripts/parse_outputs.py cdk-outputs-model.json
 
-echo "Model deployment complete. EKS Endpoint URL is in frontend/.env"
+echo "Model deployment complete. EKS Endpoint URL is in .env"

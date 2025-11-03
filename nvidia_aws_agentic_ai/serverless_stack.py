@@ -477,6 +477,55 @@ class ServerlessStack(Stack):
             },
         )
 
+        # Query API - Submit and Status
+        query_processor = _lambda.Function(
+            self,
+            "QueryProcessor",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "rag", "l23_query_processor")
+            ),
+            timeout=Duration.minutes(5),
+            memory_size=1024,
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
+                "QUERIES_TABLE": "Queries",
+                "SENTENCES_TABLE": sentences_table.table_name,
+                "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
+                "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
+            },
+        )
+
+        query_submit = _lambda.Function(
+            self,
+            "QuerySubmit",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "api_tools", "l21_query_submit")
+            ),
+            timeout=Duration.seconds(30),
+            environment={
+                "QUERIES_TABLE": "Queries",
+                "QUERY_PROCESSOR_LAMBDA": query_processor.function_name,
+            },
+        )
+
+        query_status = _lambda.Function(
+            self,
+            "QueryStatus",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "api_tools", "l22_query_status")
+            ),
+            timeout=Duration.seconds(30),
+            environment={
+                "QUERIES_TABLE": "Queries",
+            },
+        )
+
         # L19-L20: API Observability Tools
         get_processing_chain = _lambda.Function(
             self,
@@ -602,6 +651,27 @@ class ServerlessStack(Stack):
         llm_call.grant_invoke(validate_doc)
         llm_call.grant_invoke(sanitize_doc)
         llm_call.grant_invoke(synthesize_answer)
+        llm_call.grant_invoke(query_processor)
+
+        # Query API permissions
+        query_processor.grant_invoke(query_submit)
+        retrieve_from_embedding.grant_invoke(query_processor)
+        kg_bucket.grant_read(query_processor)
+        sentences_table.grant_read_data(query_processor)
+        
+        # Grant DynamoDB permissions for Queries table
+        query_submit.add_to_role_policy(iam.PolicyStatement(
+            actions=["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"],
+            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
+        ))
+        query_status.add_to_role_policy(iam.PolicyStatement(
+            actions=["dynamodb:GetItem"],
+            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
+        ))
+        query_processor.add_to_role_policy(iam.PolicyStatement(
+            actions=["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Scan"],
+            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
+        ))
         
         # Add LLM function name to agent environments
         for agent_func in [extract_entities, extract_kriya, build_events, audit_events, 
@@ -762,6 +832,15 @@ class ServerlessStack(Stack):
         # POST /query
         query_resource = api.root.add_resource("query")
         query_resource.add_method("POST", apigw.LambdaIntegration(synthesize_answer))
+
+        # POST /query/submit
+        query_submit_resource = query_resource.add_resource("submit")
+        query_submit_resource.add_method("POST", apigw.LambdaIntegration(query_submit))
+
+        # GET /query/status/{query_id}
+        query_status_resource = query_resource.add_resource("status")
+        query_id_resource = query_status_resource.add_resource("{query_id}")
+        query_id_resource.add_method("GET", apigw.LambdaIntegration(query_status))
 
         # GET /processing-chain/{doc_id}
         chain_resource = api.root.add_resource("processing-chain")
