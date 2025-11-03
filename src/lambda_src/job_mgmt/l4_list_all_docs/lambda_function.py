@@ -3,19 +3,52 @@ import os
 import boto3
 
 # Boto3 clients
-# s3_client = boto3.client("s3")
-# dynamodb = boto3.resource("dynamodb")
+dynamodb = boto3.client("dynamodb")
 
 # Environment variables
-# TABLE_NAME = os.environ["TABLE_NAME"]
-# BUCKET_NAME = os.environ["BUCKET_NAME"]
+JOBS_TABLE = os.environ["JOBS_TABLE"]
 
 def lambda_handler(event, context):
     """
-    TODO: IMPLEMENT LOGIC
+    GET /docs - List all documents
     """
-    print(json.dumps(event, indent=2))
-
-    # Example: Propagate the input to the next SFN step
-    # Or return a response for an API Gateway
-    return event
+    
+    try:
+        # Scan the jobs table for recent documents
+        response = dynamodb.scan(
+            TableName=JOBS_TABLE,
+            Limit=20,
+            Select='SPECIFIC_ATTRIBUTES',
+            ProjectionExpression='job_id, filename, #status, preview_text, created_at',
+            ExpressionAttributeNames={'#status': 'status'}
+        )
+        
+        # Format response
+        return {
+            'statusCode': 200,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'data': response.get('Items', []),
+                'pagination': {
+                    'total': response.get('Count', 0),
+                    'limit': 20
+                }
+            })
+        }
+        
+    except Exception as e:
+        print(f"Error listing documents: {str(e)}")
+        return {
+            'statusCode': 500,
+            'headers': {
+                'Content-Type': 'application/json',
+                'Access-Control-Allow-Origin': '*'
+            },
+            'body': json.dumps({
+                'error': 'Internal server error',
+                'message': str(e)
+            })
+        }

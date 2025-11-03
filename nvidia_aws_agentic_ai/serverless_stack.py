@@ -227,6 +227,7 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
+            reserved_concurrent_executions=3,  # Reserve 3 for LLM calls
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "JOBS_TABLE": jobs_table.table_name,
@@ -266,6 +267,22 @@ class ServerlessStack(Stack):
             environment={
                 "VERIFIED_BUCKET": verified_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
+            },
+        )
+
+        # L5: Check Dedup (The Fix Logic)
+        l5_check_dedup = _lambda.Function(
+            self,
+            "CheckDedupTask",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "job_mgmt", "l5_check_dedup")
+            ),
+            timeout=Duration.minutes(1),
+            memory_size=512,
+            environment={
+                "SENTENCES_TABLE": sentences_table.table_name
             },
         )
 
@@ -505,6 +522,7 @@ class ServerlessStack(Stack):
             llm_call,
             embedding_call,
             get_sentences_from_s3,
+            l5_check_dedup,
             extract_entities,
             extract_kriya,
             build_events,
@@ -524,24 +542,29 @@ class ServerlessStack(Stack):
             func.add_to_role_policy(s3_permissions)
             func.add_to_role_policy(dynamodb_permissions)
 
-        # Add Bedrock permissions to functions that need it
+        # Add Bedrock permissions only to LLM and embedding functions
         llm_call.add_to_role_policy(bedrock_policy)
         embedding_call.add_to_role_policy(bedrock_policy)
-        # Add Bedrock for L2 (Validate) and L3 (Sanitize)
-        validate_doc.add_to_role_policy(bedrock_policy)
-        sanitize_doc.add_to_role_policy(bedrock_policy)
-        # Add Bedrock for KG agent functions
-        extract_entities.add_to_role_policy(bedrock_policy)
-        extract_kriya.add_to_role_policy(bedrock_policy)
-        build_events.add_to_role_policy(bedrock_policy)
-        audit_events.add_to_role_policy(bedrock_policy)
-        extract_relations.add_to_role_policy(bedrock_policy)
-        extract_attributes.add_to_role_policy(bedrock_policy)
-        # Add Bedrock for RAG
-        synthesize_answer.add_to_role_policy(bedrock_policy)
 
         # Grant L18 permission to invoke L17
         retrieve_from_embedding.grant_invoke(synthesize_answer)
+        
+        # Grant agent Lambdas permission to invoke L7 (LLM Call)
+        llm_call.grant_invoke(extract_entities)
+        llm_call.grant_invoke(extract_kriya)
+        llm_call.grant_invoke(build_events)
+        llm_call.grant_invoke(audit_events)
+        llm_call.grant_invoke(extract_relations)
+        llm_call.grant_invoke(extract_attributes)
+        llm_call.grant_invoke(validate_doc)
+        llm_call.grant_invoke(sanitize_doc)
+        llm_call.grant_invoke(synthesize_answer)
+        
+        # Add LLM function name to agent environments
+        for agent_func in [extract_entities, extract_kriya, build_events, audit_events, 
+                          extract_relations, extract_attributes, validate_doc, 
+                          sanitize_doc, synthesize_answer]:
+            agent_func.add_environment("LLM_CALL_LAMBDA_NAME", llm_call.function_name)
 
         # ========================================
         # S3 TRIGGERS
@@ -573,7 +596,19 @@ class ServerlessStack(Stack):
             result_path="$.sentence_data",  # Puts output at {"sentence_data": {"sentences": [...]}}
         )
 
-        # SFN Step 2: Define the sub-workflow for ONE sentence
+        # SFN Step 2: Add deduplication check as first step
+        check_dedup_task = tasks.LambdaInvoke(
+            self,
+            "CheckDedupTaskInvoke",
+            lambda_function=l5_check_dedup,
+            payload_response_only=True,
+        )
+        
+        # Choice state to skip processing if already done
+        dedup_choice = sfn.Choice(self, "DedupChoice")
+        skip_processing = sfn.Pass(self, "SkipProcessing", result=sfn.Result.from_object({"status": "already_processed"}))
+        
+        # SFN Step 3: Define the sub-workflow for ONE sentence
         # This is your original SFN definition, now inside a Map state
         parallel_entities_kriya = sfn.Parallel(self, "ParallelEntitiesKriya")
         entities_task = tasks.LambdaInvoke(
@@ -585,7 +620,12 @@ class ServerlessStack(Stack):
         kriya_task = tasks.LambdaInvoke(
             self, "KriyaTask", lambda_function=extract_kriya, payload_response_only=True
         )
-        parallel_entities_kriya.branch(entities_task).branch(kriya_task)
+        embedding_task = tasks.LambdaInvoke(
+            self, "EmbeddingTask",
+            lambda_function=embedding_call,
+            payload_response_only=True
+        )
+        parallel_entities_kriya.branch(entities_task).branch(kriya_task).branch(embedding_task)
 
         build_events_task = tasks.LambdaInvoke(
             self,
@@ -630,8 +670,8 @@ class ServerlessStack(Stack):
             payload_response_only=True,
         )
 
-        # Chain the sub-workflow together
-        sentence_processing_flow = (
+        # Chain the sub-workflow together with deduplication
+        processing_workflow = (
             parallel_entities_kriya.next(build_events_task)
             .next(audit_events_task)
             .next(parallel_relations_attributes)
@@ -641,13 +681,19 @@ class ServerlessStack(Stack):
                 .branch(graph_edge_task)
             )
         )
+        
+        sentence_processing_flow = check_dedup_task.next(
+            dedup_choice
+            .when(sfn.Condition.string_equals("$.kg_status", "kg_done"), skip_processing)
+            .otherwise(processing_workflow)
+        )
 
         # SFN Step 3: Create the Map state to run the sub-workflow
         process_all_sentences_map = sfn.Map(
             self,
             "ProcessAllSentencesMap",
             items_path=sfn.JsonPath.string_at("$.sentence_data.sentences"),
-            max_concurrency=2,
+            max_concurrency=1,  # MUST BE 1. This map processes 1 sentence, which spawns ~6 parallel agents. max_concurrency > 1 will overload l7_llm_call (limit 3).
             result_path="$.map_results",
         ).iterator(sentence_processing_flow)
 
