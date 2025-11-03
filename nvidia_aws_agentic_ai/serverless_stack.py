@@ -424,6 +424,7 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
+            layers=[requests_layer],
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
         graph_edge_ops = _lambda.Function(
@@ -436,6 +437,7 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
+            layers=[requests_layer],
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name

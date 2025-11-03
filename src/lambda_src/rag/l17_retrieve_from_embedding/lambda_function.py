@@ -2,7 +2,6 @@ import json
 import os
 import boto3
 import numpy as np
-from sklearn.metrics.pairwise import cosine_similarity
 
 # Boto3 clients
 s3_client = boto3.client("s3")
