@@ -1,6 +1,111 @@
-# Kāraka RAG: Ancient Logic. Modern Intelligence.
+# 🧠⚡ **Kāraka NexusGraph**
+
+<p align="center">
+  <img src="image/Karaka.webp" alt="Kāraka NexusGraph" width="600"/>
+</p>
+
+### *Agentic Intelligence, Deployed at Cloud Speed | NVIDIA NIM hosted on EKS*
+
+[![AWS](https://img.shields.io/badge/AWS-EKS-orange?logo=amazon-aws&logoColor=white)]()
+[![NVIDIA NIM](https://img.shields.io/badge/NVIDIA-NIM-76B900?logo=nvidia&logoColor=white)]()
+[![AWS CDK](https://img.shields.io/badge/AWS-CDK-orange?logo=amazon-aws&logoColor=white)]()
+[![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)]()
+[![React](https://img.shields.io/badge/Frontend-React-61DAFB?logo=react&logoColor=white)]()
+[![Step Functions](https://img.shields.io/badge/AWS-Step%20Functions-FF9900?logo=amazon-aws&logoColor=white)]()
+[![Lambda](https://img.shields.io/badge/AWS-Lambda-FF9900?logo=aws-lambda&logoColor=white)]()
 
 > **For Judges:** [📖 Deployment Guide](./DEPLOYMENT-GUIDE.md) - Complete setup instructions for testing this project
+
+---
+
+## 🏎️ Overview
+
+**Kāraka NexusGraph** is a full-stack **Agentic AI application** built for the 2025 NVIDIA × AWS Generative AI Hackathon. It showcases how **Llama-3.1 Nemotron-Nano 8B v1** (deployed as a NVIDIA NIM inference microservice) can power an **agentic reasoning system** hosted efficiently on **AWS EKS**, paired with a **Retrieval Embedding NIM** for contextual memory.
+
+> 🪶 *Kāraka NexusGraph combines scalable cloud deployment with modular agentic reasoning — making intelligence fast, composable, and cloud-native.*
+
+---
+
+## 🧩 Core Stack
+
+| Layer | Technology | Purpose |
+|-------|-------------|---------|
+| **Inference** | `NVIDIA NIM: Llama-3.1-Nemotron-Nano-8B-v1` | Large-language reasoning engine |
+| **Embedding / Retrieval** | `nvidia/llama-3.2-nv-embedqa-1b-v2` | Vector memory for contextual recall |
+| **Compute Platform** | `AWS EKS` (AWS CDK provisioned) | Containerized microservice orchestration |
+| **Orchestration** | `AWS Step Functions` | Agentic workflow coordination |
+| **Serverless Compute** | `AWS Lambda (Python 3.12)` | Event-driven processing agents |
+| **Storage** | `AWS S3 + DynamoDB` | Document storage + metadata |
+| **Monitoring / Logging** | `CloudWatch` | Usage tracking + observability |
+| **API Layer** | `AWS API Gateway` | RESTful endpoints for frontend |
+| **Graph Operations** | `NetworkX` | Knowledge graph structure |
+| **Frontend (UI)** | `React` | Interactive visualization & query interface |
+| **IaC** | `AWS CDK (Python)` | Automated, reproducible infra setup |
+
+---
+
+## 🚀 Features
+
+- ⚙️ **Agentic AI Core** – Modular reasoning agents coordinated via AWS Step Functions
+- ☁️ **NVIDIA NIM Inference** – Runs Llama 3.1 Nano 8B as a microservice on EKS
+- 🧭 **Retrieval Embedding Memory** – Uses nv-embedqa NIM for contextual grounding
+- 📊 **AWS Native Infra** – Scalable, monitored, cost-controlled Kubernetes cluster
+- 🔄 **Iterative Validation** – LLM-driven quality assurance with retry logic
+- 🎯 **Semantic Role Labeling** – Kāraka theory for precise fact extraction
+- 💬 **Structured Evidence Retrieval** – Graph traversal for hallucination-free answers
+- 🛠️ **Infrastructure as Code** – AWS CDK for EKS, Lambda, DynamoDB, S3
+- 📈 **Observability Tools** – Processing chain visualization and LLM call logs
+
+---
+
+## 🛠️ Tools & Technologies Deep Dive
+
+### NVIDIA NIM (NVIDIA Inference Microservices)
+- **Generator Model**: `llama-3.1-nemotron-nano-8b-v1`
+  - Deployed as containerized microservice on EKS
+  - Handles all LLM reasoning tasks (entity extraction, validation, synthesis)
+  - OpenAI-compatible API endpoints
+- **Embedder Model**: `llama-3.2-nv-embedqa-1b-v2`
+  - Generates 2048-dimensional embeddings
+  - Powers semantic search and retrieval
+  - Optimized for query-document matching
+
+### AWS Services Architecture
+- **EKS (Elastic Kubernetes Service)**
+  - 2x g5.xlarge GPU nodes (NVIDIA A10G)
+  - Auto-scaling node groups
+  - Managed Kubernetes control plane
+- **Lambda Functions** (18 total)
+  - Python 3.12 runtime
+  - Reserved concurrency for LLM calls (3) and RAG queries (2 each)
+  - Custom layer with requests, networkx, numpy
+- **Step Functions**
+  - Per-document workflow orchestration
+  - Map state for parallel sentence processing
+  - Max concurrency = 1 to prevent LLM overload
+- **DynamoDB**
+  - Jobs table: Document processing status
+  - Sentences table: Sentence metadata with GSI by job_id
+  - LLM Logs table: Complete audit trail with GSIs
+- **S3 Buckets**
+  - Raw documents bucket
+  - Verified documents bucket
+  - Knowledge graph bucket (nodes.json, edges.json, embeddings)
+
+### Agentic Pipeline Components
+1. **Document Lifecycle Agents** (L1-L4)
+   - Upload handler, validator, sanitizer, status tracker
+2. **Knowledge Graph Extraction Agents** (L9-L14)
+   - Entity extractor, Kriyā extractor, event builder, auditor, relation extractor, attribute extractor
+3. **Graph Operations** (L15-L16)
+   - Node operations (NetworkX graph construction)
+   - Edge operations (Kāraka links + relations)
+4. **RAG Agents** (L17-L18, L21-L23)
+   - Embedding retrieval, answer synthesis, query processor
+5. **Observability Tools** (L19-L20)
+   - Processing chain viewer, sentence chain viewer
+
+---
 
 ## The Problem with Traditional RAG
 
