@@ -12,7 +12,7 @@ dynamodb = boto3.client("dynamodb")
 # Environment variables
 LOG_TABLE = os.environ['LLM_CALL_LOG_TABLE']
 KG_BUCKET = os.environ['KG_BUCKET']
-GENERATE_ENDPOINT = "http://your-nvidia-endpoint-here"  # TODO: Update with actual endpoint
+GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT', 'http://a72a7b27168ef4f2f825fe7aae9ce8ed-2069339664.us-east-1.elb.amazonaws.com:80')
 
 def lambda_handler(event, context):
     """
@@ -66,16 +66,14 @@ def lambda_handler(event, context):
             }
         )
         
-        # Make HTTP call to LLM endpoint
-        # TODO: Update with actual NVIDIA API format
+        # Make HTTP call to LLM endpoint using OpenAI-compatible format
         response = requests.post(
-            GENERATE_ENDPOINT,
+            f"{GENERATE_ENDPOINT}/v1/chat/completions",
             json={
-                'inputs': formatted_prompt,
-                'parameters': {
-                    'max_tokens': 2000,
-                    'temperature': 0.1
-                }
+                'model': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
+                'messages': [{'role': 'user', 'content': formatted_prompt}],
+                'max_tokens': 2000,
+                'temperature': 0.1
             },
             timeout=300
         )

@@ -233,6 +233,7 @@ class ServerlessStack(Stack):
                 "JOBS_TABLE": jobs_table.table_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
+                "GENERATE_ENDPOINT": os.environ.get("APP_GENERATE_ENDPOINT_URL", ""),
             },
         )
 
@@ -247,7 +248,10 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            environment={"KG_BUCKET": kg_bucket.bucket_name},
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
+                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", ""),
+            },
         )
 
         # L8 (SFN Helper): Get Sentences <<< NEW LAMBDA

@@ -9,7 +9,7 @@ s3_client = boto3.client("s3")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
-EMBED_ENDPOINT = "http://your-nvidia-embedding-endpoint-here"  # TODO: Update with actual endpoint
+EMBED_ENDPOINT = os.environ.get('EMBED_ENDPOINT', 'http://ac5f3892aa1654ccbb5e6e97382f31f8-582704769.us-east-1.elb.amazonaws.com:80')
 
 def lambda_handler(event, context):
     """
@@ -21,18 +21,21 @@ def lambda_handler(event, context):
         text = event['text']
         sentence_hash = event['hash']
         
-        # Make embedding API call
-        # TODO: Update with actual NVIDIA embedding API format
+        # Make embedding API call using OpenAI-compatible format
         response = requests.post(
-            EMBED_ENDPOINT,
-            json={'text': text},
+            f"{EMBED_ENDPOINT}/v1/embeddings",
+            json={
+                'model': 'nvidia/llama-3.2-nv-embedqa-1b-v2',
+                'input': text,
+                'input_type': 'passage'
+            },
             timeout=60
         )
         
         if response.status_code == 200:
             embedding_data = response.json()
-            # Assuming the API returns {'embedding': [float, float, ...]}
-            embedding_vector = embedding_data.get('embedding', [])
+            # Extract embedding from OpenAI-compatible response
+            embedding_vector = embedding_data['data'][0]['embedding']
             
             # Convert to numpy array and save as .npy file
             np_array = np.array(embedding_vector, dtype=np.float32)

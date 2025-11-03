@@ -20,8 +20,8 @@ def lambda_handler(event, context):
         bucket = event['Records'][0]['s3']['bucket']['name']
         key = event['Records'][0]['s3']['object']['key']
         
-        # Extract job_id from filename (assuming format: job_id.txt)
-        job_id = key.split('.')[0]
+        # Extract job_id from S3 key (format: job_id/filename.txt)
+        job_id = key.split('/')[0]
         
         print(f"Processing document upload: bucket={bucket}, key={key}, job_id={job_id}")
         
