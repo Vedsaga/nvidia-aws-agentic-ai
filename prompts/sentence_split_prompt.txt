@@ -14,3 +14,6 @@ Input: "Dr. Smith reviewed data. He found errors."
 Output: ["Dr. Smith reviewed data. ", "He found errors."]
 
 Note the space after "data." is included in first sentence!
+
+TEXT TO SPLIT:
+{text}

@@ -118,6 +118,19 @@ class ServerlessStack(Stack):
         )
 
         # ========================================
+        # LAMBDA LAYERS
+        # ========================================
+        
+        # Requests library layer for LLM/Embedding calls
+        requests_layer = _lambda.LayerVersion(
+            self,
+            "RequestsLayer",
+            code=_lambda.Code.from_asset("lambda_layer"),
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            description="Requests library for HTTP calls to NVIDIA NIM"
+        )
+
+        # ========================================
         # LAMBDA FUNCTIONS
         # ========================================
 
@@ -246,6 +259,7 @@ class ServerlessStack(Stack):
             timeout=Duration.minutes(15),
             memory_size=1024,
             reserved_concurrent_executions=3,  # Reserve 3 for LLM calls
+            layers=[requests_layer],
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "JOBS_TABLE": jobs_table.table_name,
@@ -266,6 +280,7 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
+            layers=[requests_layer],
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", ""),
