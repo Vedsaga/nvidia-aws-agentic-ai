@@ -88,7 +88,9 @@ def lambda_handler(event, context):
                             })
                         
                         # Build context entry
-                        context_entry = f"Sentence: {sentence_text}\nEntities: {', '.join([n['id'] for n in nodes])}\nRelations: {', '.join([f\"{e['source']} --[{e['label']}]--> {e['target']}\" for e in edges])}"
+                        entities_str = ', '.join([n['id'] for n in nodes])
+                        relations_str = ', '.join([f"{e['source']} --[{e['label']}]--> {e['target']}" for e in edges])
+                        context_entry = f"Sentence: {sentence_text}\nEntities: {entities_str}\nRelations: {relations_str}"
                         context_parts.append(context_entry)
                         
                         references.append({
