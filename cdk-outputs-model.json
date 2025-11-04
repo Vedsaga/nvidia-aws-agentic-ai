@@ -1,7 +1,0 @@
-{
-  "EksStack": {
-    "GenerateEndpoint": "http://a72a7b27168ef4f2f825fe7aae9ce8ed-2069339664.us-east-1.elb.amazonaws.com",
-    "EmbedEndpoint": "http://ac5f3892aa1654ccbb5e6e97382f31f8-582704769.us-east-1.elb.amazonaws.com",
-    "ClusterName": "HackathonCluster077AF9A5-f1bf0d9d2a2d489091b8fe8e4c6c8b9f"
-  }
-}
