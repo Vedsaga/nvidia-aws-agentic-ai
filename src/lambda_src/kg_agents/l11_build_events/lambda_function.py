@@ -191,6 +191,14 @@ def lambda_handler(event, context):
         sentence_hash = event['hash']
         job_id = event['job_id']
         
+        # Check if already complete
+        try:
+            response = dynamodb.get_item(TableName=SENTENCES_TABLE, Key={'sentence_hash': {'S': sentence_hash}})
+            if 'Item' in response and response['Item'].get('status', {}).get('S') == 'KG_COMPLETE':
+                return event
+        except:
+            pass
+        
         # Load D1 and D2a outputs
         entities_json = load_d1_output(sentence_hash)
         kriyas_json = load_d2a_output(sentence_hash)

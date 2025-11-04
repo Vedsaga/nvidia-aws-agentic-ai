@@ -27,15 +27,22 @@ def lambda_handler(event, context):
                 # Already processed, skip
                 return {'kg_status': 'kg_done'}
         
-        # Sentence not found or not done - create/update entry
+        # Sentence not found or not done - create/update entry with all required fields
         dynamodb.put_item(
             TableName=os.environ['SENTENCES_TABLE'],
             Item={
                 'sentence_hash': {'S': sentence_hash},
                 'text': {'S': event['text']},
+                'original_sentence': {'S': event['text']},  # Store original sentence
                 'job_id': {'S': job_id},
+                'document_ids': {'SS': [job_id]},  # Track all source documents
                 'kg_status': {'S': 'pending'},
-                'documents': {'SS': [job_id]}
+                'status': {'S': 'KG_PENDING'},  # Proper status enum
+                'documents': {'SS': [job_id]},  # Keep for backward compatibility
+                'd1_attempts': {'N': '0'},
+                'd2a_attempts': {'N': '0'},
+                'd2b_attempts': {'N': '0'},
+                'needs_review': {'BOOL': False}
             }
         )
         

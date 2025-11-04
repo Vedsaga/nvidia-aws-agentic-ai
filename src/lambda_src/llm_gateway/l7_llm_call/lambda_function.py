@@ -57,8 +57,11 @@ def lambda_handler(event, context):
             print(f"Error loading prompt {prompt_name}: {str(e)}")
             raise
         
-        # Format prompt with inputs
-        formatted_prompt = prompt_template.format(**inputs_dict)
+        # Format prompt with inputs using safe replacement
+        formatted_prompt = prompt_template
+        for key, value in inputs_dict.items():
+            placeholder = '{' + key + '}'
+            formatted_prompt = formatted_prompt.replace(placeholder, str(value))
         
         # Prepare request payload
         request_payload = {

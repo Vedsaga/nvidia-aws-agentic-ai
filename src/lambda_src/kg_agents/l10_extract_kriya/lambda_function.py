@@ -157,6 +157,14 @@ def lambda_handler(event, context):
         sentence_hash = event['hash']
         job_id = event['job_id']
         
+        # Check if already complete
+        try:
+            response = dynamodb.get_item(TableName=SENTENCES_TABLE, Key={'sentence_hash': {'S': sentence_hash}})
+            if 'Item' in response and response['Item'].get('status', {}).get('S') == 'KG_COMPLETE':
+                return event
+        except:
+            pass
+        
         # Get current attempts
         current_attempts = get_sentence_attempts(sentence_hash)
         
