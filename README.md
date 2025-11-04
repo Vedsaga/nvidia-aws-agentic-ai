@@ -26,6 +26,92 @@
 
 ---
 
+## The Problem with Traditional RAG
+
+Today's AI retrieves by **keyword**. We retrieve by **meaning**.
+
+Traditional Retrieval-Augmented Generation (RAG) is noisy because it pulls **text**, not **facts**. When you ask "Who replicated findings funded by the NIH?", keyword-based systems return entire paragraphs containing "NIH" and "replicated" — forcing the LLM to re-parse unstructured text, leading to hallucinations and imprecise answers.
+
+## Our Solution: Kāraka Knowledge Graphs
+
+We fix this by using **LLMs to map unstructured data into a deterministic Kāraka knowledge graph**. This builds a knowledge base on **how** and **why**, allowing an agent to retrieve structured, hallucination-free facts for precise answers.
+
+### What is Kāraka Theory?
+
+Kāraka (कारक) is a 2,500-year-old grammatical framework from Pāṇini's Sanskrit grammar that defines **semantic roles** in sentences:
+
+- **Agent (Kartā)**: Who does the action
+- **Object (Karma)**: What receives the action  
+- **Instrument (Karaṇa)**: Tool/means used
+- **Recipient (Sampradāna)**: Beneficiary/destination
+- **Source (Apādāna)**: Origin/separation point
+- **Locus (Adhikaraṇa)**: Where/when/what-about the action occurs
+
+Unlike dependency parsing (which captures syntax), Kāraka captures **semantic intent** — the deep structure of meaning that remains constant across paraphrases.
+
+### Architecture Overview
+
+```mermaid
+graph TB
+    subgraph "Document Ingestion"
+        A[Raw Document] -->|Upload| B[L1: Upload Handler]
+        B -->|Store| C[S3: Raw Bucket]
+        C -->|Trigger| D[L2: Validate Doc]
+        D -->|LLM Verification| E[L3: Sanitize Doc]
+        E -->|Split Sentences| F[S3: Verified Bucket]
+    end
+    
+    subgraph "Knowledge Graph Construction (Step Functions)"
+        F -->|Trigger| G[SFN: Per-Document Workflow]
+        G -->|Get Sentences| H[L8: Get Sentences]
+        
+        H -->|For Each Sentence| I[Parallel Extraction]
+        I -->|Extract| J[L9: Extract Entities]
+        I -->|Extract| K[L10: Extract Kriyā]
+        I -->|Embed| L[L8: Embedding Call]
+        
+        J & K -->|Build| M[L11: Build Events]
+        M -->|Audit| N[L12: Audit Events]
+        N -->|Extract| O[L13: Extract Relations]
+        
+        O -->|Store| P[L15: Graph Node Ops]
+        O -->|Store| Q[L16: Graph Edge Ops]
+        L -->|Store| R[S3: Embeddings]
+    end
+    
+    subgraph "Query Processing"
+        S[User Query] -->|Submit| T[L21: Query Submit]
+        T -->|Process| U[L23: Query Processor]
+        U -->|Embed Query| V[L8: Embedding Call]
+        V -->|Retrieve| W[L17: Retrieve from Embedding]
+        W -->|Graph Traversal| X[NetworkX Graph]
+        X -->|Synthesize| Y[L18: Synthesize Answer]
+        Y -->|LLM Call| Z[L7: LLM Call]
+        Z -->|Return| AA[Structured Answer + Citations]
+    end
+    
+    subgraph "Storage Layer"
+        AB[(DynamoDB: Jobs)]
+        AC[(DynamoDB: Sentences)]
+        AD[(DynamoDB: LLM Logs)]
+        AE[S3: Knowledge Graph]
+    end
+    
+    subgraph "Model Infrastructure (EKS)"
+        AF[NVIDIA NIM: Generator]
+        AG[NVIDIA NIM: Embedder]
+    end
+    
+    D -.->|Log| AD
+    E -.->|Update| AB
+    E -.->|Store| AC
+    P & Q -.->|Store| AE
+    Z -.->|Call| AF
+    V & L -.->|Call| AG
+```
+
+---
+
 ## 🧩 Core Stack
 
 | Layer | Technology | Purpose |
@@ -106,90 +192,6 @@
    - Processing chain viewer, sentence chain viewer
 
 ---
-
-## The Problem with Traditional RAG
-
-Today's AI retrieves by **keyword**. We retrieve by **meaning**.
-
-Traditional Retrieval-Augmented Generation (RAG) is noisy because it pulls **text**, not **facts**. When you ask "Who replicated findings funded by the NIH?", keyword-based systems return entire paragraphs containing "NIH" and "replicated" — forcing the LLM to re-parse unstructured text, leading to hallucinations and imprecise answers.
-
-## Our Solution: Kāraka Knowledge Graphs
-
-We fix this by using **LLMs to map unstructured data into a deterministic Kāraka knowledge graph**. This builds a knowledge base on **how** and **why**, allowing an agent to retrieve structured, hallucination-free facts for precise answers.
-
-### What is Kāraka Theory?
-
-Kāraka (कारक) is a 2,500-year-old grammatical framework from Pāṇini's Sanskrit grammar that defines **semantic roles** in sentences:
-
-- **Agent (Kartā)**: Who does the action
-- **Object (Karma)**: What receives the action  
-- **Instrument (Karaṇa)**: Tool/means used
-- **Recipient (Sampradāna)**: Beneficiary/destination
-- **Source (Apādāna)**: Origin/separation point
-- **Locus (Adhikaraṇa)**: Where/when/what-about the action occurs
-
-Unlike dependency parsing (which captures syntax), Kāraka captures **semantic intent** — the deep structure of meaning that remains constant across paraphrases.
-
-## Architecture Overview
-
-```mermaid
-graph TB
-    subgraph "Document Ingestion"
-        A[Raw Document] -->|Upload| B[L1: Upload Handler]
-        B -->|Store| C[S3: Raw Bucket]
-        C -->|Trigger| D[L2: Validate Doc]
-        D -->|LLM Verification| E[L3: Sanitize Doc]
-        E -->|Split Sentences| F[S3: Verified Bucket]
-    end
-    
-    subgraph "Knowledge Graph Construction (Step Functions)"
-        F -->|Trigger| G[SFN: Per-Document Workflow]
-        G -->|Get Sentences| H[L8: Get Sentences]
-        
-        H -->|For Each Sentence| I[Parallel Extraction]
-        I -->|Extract| J[L9: Extract Entities]
-        I -->|Extract| K[L10: Extract Kriyā]
-        I -->|Embed| L[L8: Embedding Call]
-        
-        J & K -->|Build| M[L11: Build Events]
-        M -->|Audit| N[L12: Audit Events]
-        N -->|Extract| O[L13: Extract Relations]
-        
-        O -->|Store| P[L15: Graph Node Ops]
-        O -->|Store| Q[L16: Graph Edge Ops]
-        L -->|Store| R[S3: Embeddings]
-    end
-    
-    subgraph "Query Processing"
-        S[User Query] -->|Submit| T[L21: Query Submit]
-        T -->|Process| U[L23: Query Processor]
-        U -->|Embed Query| V[L8: Embedding Call]
-        V -->|Retrieve| W[L17: Retrieve from Embedding]
-        W -->|Graph Traversal| X[NetworkX Graph]
-        X -->|Synthesize| Y[L18: Synthesize Answer]
-        Y -->|LLM Call| Z[L7: LLM Call]
-        Z -->|Return| AA[Structured Answer + Citations]
-    end
-    
-    subgraph "Storage Layer"
-        AB[(DynamoDB: Jobs)]
-        AC[(DynamoDB: Sentences)]
-        AD[(DynamoDB: LLM Logs)]
-        AE[S3: Knowledge Graph]
-    end
-    
-    subgraph "Model Infrastructure (EKS)"
-        AF[NVIDIA NIM: Generator]
-        AG[NVIDIA NIM: Embedder]
-    end
-    
-    D -.->|Log| AD
-    E -.->|Update| AB
-    E -.->|Store| AC
-    P & Q -.->|Store| AE
-    Z -.->|Call| AF
-    V & L -.->|Call| AG
-```
 
 ## The Kāraka RAG Pipeline
 
