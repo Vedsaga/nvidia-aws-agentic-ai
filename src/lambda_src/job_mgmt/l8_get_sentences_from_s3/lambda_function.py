@@ -48,29 +48,69 @@ def lambda_handler(event, context):
                 
                 if 'Item' in existing:
                     item = existing['Item']
-                    status_value = item.get('status', {}).get('S')
-                    legacy_status = item.get('kg_status', {}).get('S')
-                    if status_value == 'KG_COMPLETE' or legacy_status == 'kg_done':
-                        print(f"Sentence {sentence_hash} already complete, skipping reprocessing")
-                        should_process = False
-
                     docs = set(item.get('document_ids', {}).get('SS', []))
                     legacy_docs = item.get('documents', {}).get('SS', [])
                     if not docs and legacy_docs:
                         docs.update(legacy_docs)
 
+                    already_processed_for_job = job_id in docs
                     docs.add(job_id)
 
-                    dynamodb.update_item(
-                        TableName=SENTENCES_TABLE,
-                        Key={'sentence_hash': {'S': sentence_hash}},
-                        UpdateExpression='SET document_ids = :docs, job_id = :job, original_sentence = if_not_exists(original_sentence, :text), text = if_not_exists(text, :text)',
-                        ExpressionAttributeValues={
-                            ':docs': {'SS': sorted(docs)},
-                            ':job': {'S': job_id},
-                            ':text': {'S': sentence_text}
-                        }
-                    )
+                    status_value = item.get('status', {}).get('S')
+                    legacy_status = item.get('kg_status', {}).get('S')
+
+                    reset_for_new_job = not already_processed_for_job
+
+                    update_clauses = [
+                        'document_ids = :docs',
+                        'job_id = :job',
+                        'original_sentence = if_not_exists(original_sentence, :text)',
+                        'text = if_not_exists(text, :text)'
+                    ]
+                    expr_values = {
+                        ':docs': {'SS': sorted(docs)},
+                        ':job': {'S': job_id},
+                        ':text': {'S': sentence_text}
+                    }
+                    expr_names = {}
+                    remove_fields = []
+
+                    if reset_for_new_job:
+                        update_clauses.extend([
+                            '#status = :pending',
+                            'kg_status = :legacy_pending',
+                            'best_score = :zero',
+                            'needs_review = :false',
+                            'attempts_count = :zero',
+                            'd1_attempts = :zero',
+                            'd2a_attempts = :zero',
+                            'd2b_attempts = :zero'
+                        ])
+                        expr_names['#status'] = 'status'
+                        expr_values.update({
+                            ':pending': {'S': 'KG_PENDING'},
+                            ':legacy_pending': {'S': 'pending'},
+                            ':zero': {'N': '0'},
+                            ':false': {'BOOL': False}
+                        })
+                        remove_fields.extend(['failure_reason', 'scorer_feedback'])
+
+                    update_expression = 'SET ' + ', '.join(update_clauses)
+                    if remove_fields:
+                        update_expression += ' REMOVE ' + ', '.join(remove_fields)
+
+                    update_args = {
+                        'TableName': SENTENCES_TABLE,
+                        'Key': {'sentence_hash': {'S': sentence_hash}},
+                        'UpdateExpression': update_expression,
+                        'ExpressionAttributeValues': expr_values
+                    }
+                    if expr_names:
+                        update_args['ExpressionAttributeNames'] = expr_names
+
+                    dynamodb.update_item(**update_args)
+
+                    should_process = reset_for_new_job or not (status_value == 'KG_COMPLETE' or legacy_status == 'kg_done')
                 else:
                     dynamodb.put_item(
                         TableName=SENTENCES_TABLE,

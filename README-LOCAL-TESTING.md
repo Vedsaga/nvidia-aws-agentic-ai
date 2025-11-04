@@ -30,29 +30,30 @@ pip install awscli
 ### 1. Setup Environment
 
 ```bash
-# Make scripts executable
-chmod +x *.sh
+# Make helper scripts executable
+chmod +x scripts/*.sh
 
-# Build Lambda functions and layer
-./local-test-setup.sh
+# Start LocalStack edge services
+./scripts/start-localstack.sh
+
+# Build and deploy the SAM stack into LocalStack
+./scripts/deploy-localstack.sh
 ```
 
 This will:
-- Build Lambda layer with `requests` and `networkx`
-- Build all Lambda functions using SAM
-- Package everything for local testing
+- Launch a LocalStack container bound to `localhost:4566`
+- Build all Lambda functions (using the shared Lambda layer)
+- Deploy the resources declared in `template.yaml` into LocalStack
 
-### 2. Start LocalStack
+### 2. Start/Stop LocalStack manually
+
+The startup script waits until LocalStack reports healthy. To stop the container:
 
 ```bash
-# Start LocalStack with DynamoDB and S3
-./start-local-env.sh
+./scripts/stop-localstack.sh
 ```
 
-This will:
-- Start LocalStack in Docker
-- Create all DynamoDB tables (DocumentJobs, Sentences, LLMCallLog, Queries)
-- Create all S3 buckets (raw-documents-local, verified-documents-local, knowledge-graph-local)
+Re-run `./scripts/start-localstack.sh` whenever you need the services again.
 
 ### 3. Test Lambda Functions
 
@@ -70,7 +71,7 @@ This will:
 ### 4. Stop Environment
 
 ```bash
-./stop-local-env.sh
+./scripts/stop-localstack.sh
 ```
 
 ## Available Lambda Functions

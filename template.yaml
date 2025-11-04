@@ -18,6 +18,7 @@ Globals:
         KG_BUCKET: !Ref KGBucket
         GENERATE_ENDPOINT: http://host.docker.internal:8000
         EMBED_ENDPOINT: http://host.docker.internal:8001
+        AWS_ENDPOINT_URL: http://host.docker.internal:4566
 
 Resources:
   # S3 Buckets
