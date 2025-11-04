@@ -159,7 +159,7 @@ chmod +x test-query-api.sh
 **Note:** Frontend documentation is being finalized by the team.
 
 For now, you can test the backend APIs directly using the scripts above. The frontend will connect to:
-- Model endpoints (from `frontend/.env`)
+- Model endpoints (from `.env`)
 - API Gateway (from `cdk-outputs-backend.json`)
 
 ## Troubleshooting
