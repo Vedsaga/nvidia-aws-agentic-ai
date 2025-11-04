@@ -9,9 +9,15 @@ s3_client = boto3.client("s3")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
-EMBED_ENDPOINT = os.environ.get('EMBED_ENDPOINT')
-if not EMBED_ENDPOINT:
-    raise ValueError("EMBED_ENDPOINT environment variable not set")
+EMBED_ENDPOINT = os.environ.get('EMBED_ENDPOINT', '')
+NVIDIA_API_KEY = os.environ.get('NVIDIA_MODEL_EMBADDING', '')
+
+# Determine if using local EKS or NVIDIA cloud
+USE_NVIDIA_CLOUD = not EMBED_ENDPOINT or EMBED_ENDPOINT == 'https://integrate.api.nvidia.com'
+if USE_NVIDIA_CLOUD:
+    EMBED_ENDPOINT = 'https://integrate.api.nvidia.com'
+    if not NVIDIA_API_KEY:
+        raise ValueError("NVIDIA_MODEL_EMBADDING environment variable required for NVIDIA cloud endpoint")
 
 def lambda_handler(event, context):
     """
@@ -24,6 +30,10 @@ def lambda_handler(event, context):
         sentence_hash = event['hash']
         
         # Make embedding API call using OpenAI-compatible format
+        headers = {'Content-Type': 'application/json'}
+        if USE_NVIDIA_CLOUD:
+            headers['Authorization'] = f'Bearer {NVIDIA_API_KEY}'
+        
         response = requests.post(
             f"{EMBED_ENDPOINT}/v1/embeddings",
             json={
@@ -31,6 +41,7 @@ def lambda_handler(event, context):
                 'input': text,
                 'input_type': 'passage'
             },
+            headers=headers,
             timeout=60
         )
         

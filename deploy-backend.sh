@@ -27,22 +27,13 @@ fi
 export $(grep -v '^#' .env | xargs)
 print_success "Environment variables loaded"
 
-# 2. Bootstrap the environment (only if needed)
-print_step "Checking CDK bootstrap status..."
-BOOTSTRAP_VERSION=$(aws cloudformation describe-stacks \
-    --stack-name CDKToolkit \
-    --query "Stacks[0].Outputs[?OutputKey=='BootstrapVersion'].OutputValue" \
-    --output text 2>/dev/null || echo "0")
-
-if [ "$BOOTSTRAP_VERSION" == "0" ]; then
-    print_step "Bootstrapping AWS environment for CDK..."
-    cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
-        --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
-        --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL
-    print_success "Bootstrap complete"
-else
-    print_success "CDK already bootstrapped (version: $BOOTSTRAP_VERSION)"
-fi
+# 2. Bootstrap the environment (force to ensure resources exist)
+print_step "Bootstrapping AWS environment for CDK..."
+cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
+    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL \
+    --force
+print_success "Bootstrap complete"
 
 # 3. Check if there are changes to deploy
 print_step "Checking for changes in ServerlessStack..."

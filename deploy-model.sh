@@ -8,11 +8,12 @@ if [ ! -f .env ]; then
 fi
 export $(grep -v '^#' .env | xargs)
 
-# 2. Bootstrap the environment
+# 2. Bootstrap the environment (force to ensure resources exist)
 echo "Bootstrapping AWS environment for CDK..."
 cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
     --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
-    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL # <-- ADD THIS LINE
+    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL \
+    --force
 
 # 3. Deploy the EKS stack
 echo "Deploying EksStack (EKS Cluster, Docker build, GPU Nodes...)"

@@ -292,7 +292,6 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            reserved_concurrent_executions=3,  # Reserve 3 for LLM calls
             layers=[requests_layer],
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
@@ -300,7 +299,8 @@ class ServerlessStack(Stack):
                 "JOBS_TABLE": jobs_table.table_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
-                "GENERATE_ENDPOINT": os.environ.get("APP_GENERATE_ENDPOINT_URL", ""),
+                "GENERATE_ENDPOINT": os.environ.get("APP_GENERATE_ENDPOINT_URL", "https://integrate.api.nvidia.com"),
+                "NVIDIA_MODEL_GENERATE": os.environ.get("NVIDIA_MODEL_GENERATE", ""),
             },
         )
 
@@ -318,7 +318,8 @@ class ServerlessStack(Stack):
             layers=[requests_layer],
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
-                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", ""),
+                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", "https://integrate.api.nvidia.com"),
+                "NVIDIA_MODEL_EMBADDING": os.environ.get("NVIDIA_MODEL_EMBADDING", ""),
             },
         )
 
@@ -516,7 +517,6 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            reserved_concurrent_executions=2,  # As per your budget
             environment={"KG_BUCKET": kg_bucket.bucket_name},
         )
         synthesize_answer = _lambda.Function(
@@ -529,7 +529,6 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            reserved_concurrent_executions=2,  # As per your budget
             environment={
                 "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
@@ -556,7 +555,8 @@ class ServerlessStack(Stack):
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
                 "RETRIEVE_LAMBDA": retrieve_from_embedding.function_name,
-                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", ""),
+                "EMBED_ENDPOINT": os.environ.get("APP_EMBED_ENDPOINT_URL", "https://integrate.api.nvidia.com"),
+                "NVIDIA_MODEL_EMBADDING": os.environ.get("NVIDIA_MODEL_EMBADDING", ""),
             },
         )
 

@@ -13,9 +13,15 @@ dynamodb = boto3.client("dynamodb")
 LOG_TABLE = os.environ['LLM_CALL_LOG_TABLE']
 PARSED_TABLE = os.environ.get('LLM_CALL_PARSED_TABLE')
 KG_BUCKET = os.environ['KG_BUCKET']
-GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT')
-if not GENERATE_ENDPOINT:
-    raise ValueError("GENERATE_ENDPOINT environment variable not set")
+GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT', '')
+NVIDIA_API_KEY = os.environ.get('NVIDIA_MODEL_GENERATE', '')
+
+# Determine if using local EKS or NVIDIA cloud
+USE_NVIDIA_CLOUD = not GENERATE_ENDPOINT or GENERATE_ENDPOINT == 'https://integrate.api.nvidia.com'
+if USE_NVIDIA_CLOUD:
+    GENERATE_ENDPOINT = 'https://integrate.api.nvidia.com'
+    if not NVIDIA_API_KEY:
+        raise ValueError("NVIDIA_MODEL_GENERATE environment variable required for NVIDIA cloud endpoint")
 
 def lambda_handler(event, context):
     """
@@ -92,10 +98,15 @@ def lambda_handler(event, context):
             }
         )
         
-        # Make HTTP call to LLM endpoint using OpenAI-compatible format
+        # Make HTTP call using OpenAI-compatible format
+        headers = {'Content-Type': 'application/json'}
+        if USE_NVIDIA_CLOUD:
+            headers['Authorization'] = f'Bearer {NVIDIA_API_KEY}'
+        
         response = requests.post(
             f"{GENERATE_ENDPOINT}/v1/chat/completions",
             json=request_payload,
+            headers=headers,
             timeout=300
         )
         
