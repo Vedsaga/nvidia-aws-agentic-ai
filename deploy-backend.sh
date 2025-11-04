@@ -58,16 +58,16 @@ if [ "$SKIP_DEPLOY" = false ] || [ "$1" == "--force" ]; then
         --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
         --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL
     print_success "Deployment complete"
+    
+    # 5. Update the frontend .env file
+    print_step "Updating frontend environment..."
+    python scripts/parse_outputs.py cdk-outputs-backend.json
+    print_success "Frontend .env updated"
 else
     print_info "Use './deploy-backend.sh --force' to force redeployment"
 fi
 
-# 5. Update the frontend .env file
-print_step "Updating frontend environment..."
-python scripts/parse_outputs.py cdk-outputs-backend.json
-print_success "Frontend .env updated"
-
-# 6. Get the KG Bucket name from the outputs
+# 6. Get the KG Bucket name from the outputs (always run for prompt sync)
 print_step "Getting KnowledgeGraphBucket name from outputs..."
 KG_BUCKET_NAME=$(jq -r '.ServerlessStack.KGBucket' ./cdk-outputs-backend.json)
 
