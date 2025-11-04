@@ -1,0 +1,30 @@
+correction_prompt: |
+  You previously extracted entities/events/kārakas from this sentence, but made errors.
+
+  ORIGINAL SENTENCE:
+  {{SENTENCE_HERE}}
+
+  YOUR PREVIOUS JSON (INCORRECT):
+  {{FAILED_JSON}}
+
+  YOUR PREVIOUS REASONING:
+  {{ORIGINAL_REASONING}}
+
+  ERRORS FOUND:
+  {{ERROR_DESCRIPTIONS}}
+
+  CRITICAL: Every text span you extract MUST appear EXACTLY as written in the original sentence.
+  - Do not invent text
+  - Do not paraphrase
+  - Use the exact words from the sentence
+  - Stick with expected JSON schema
+
+  If the error was about Locus classification, remember:
+  - Locus_Space: Physical places you can walk into (cities, buildings, labs)
+  - Locus_Time: Dates, durations, time periods (years, months, "six months")
+  - Locus_Topic: Abstract concepts, ideas, studies (research topics, theories)
+
+  Please provide a CORRECTED extraction following the same format as before.
+  
+  Show your reasoning in <reasoning> tags, carefully addressing the errors above.
+  Then provide corrected JSON in <json> tags.
