@@ -24,7 +24,10 @@ def lambda_handler(event, context):
         'sentence_hash': str,
         'stage': str,
         'prompt_name': str,
-        'inputs': dict
+        'inputs': dict,
+        'temperature': float (optional, default 0.6),
+        'attempt_number': int (optional),
+        'generation_index': int (optional)
     }
     """
     
@@ -35,6 +38,9 @@ def lambda_handler(event, context):
         stage = event['stage']
         prompt_name = event['prompt_name']
         inputs_dict = event['inputs']
+        temperature = event.get('temperature', 0.6)
+        attempt_number = event.get('attempt_number', 1)
+        generation_index = event.get('generation_index', 1)
         
         # Generate call ID and start timing
         call_id = str(uuid.uuid4())
@@ -54,7 +60,15 @@ def lambda_handler(event, context):
         # Format prompt with inputs
         formatted_prompt = prompt_template.format(**inputs_dict)
         
-        # Log request
+        # Prepare request payload
+        request_payload = {
+            'model': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
+            'messages': [{'role': 'user', 'content': formatted_prompt}],
+            'max_tokens': 12000,
+            'temperature': temperature
+        }
+        
+        # Log request with enhanced metadata
         dynamodb.put_item(
             TableName=LOG_TABLE,
             Item={
@@ -62,8 +76,13 @@ def lambda_handler(event, context):
                 'timestamp': {'N': str(int(start_time * 1000))},
                 'job_id': {'S': job_id},
                 'sentence_hash': {'S': sentence_hash},
+                'pipeline_stage': {'S': stage},
                 'stage': {'S': stage},
                 'prompt_template': {'S': prompt_name},
+                'temperature': {'N': str(temperature)},
+                'attempt_number': {'N': str(attempt_number)},
+                'generation_index': {'N': str(generation_index)},
+                'raw_request': {'S': json.dumps(request_payload)},
                 'status': {'S': 'pending'}
             }
         )
@@ -71,12 +90,7 @@ def lambda_handler(event, context):
         # Make HTTP call to LLM endpoint using OpenAI-compatible format
         response = requests.post(
             f"{GENERATE_ENDPOINT}/v1/chat/completions",
-            json={
-                'model': 'nvidia/llama-3.1-nemotron-nano-8b-v1',
-                'messages': [{'role': 'user', 'content': formatted_prompt}],
-                'max_tokens': 12000,
-                'temperature': 0.1
-            },
+            json=request_payload,
             timeout=300
         )
         
@@ -85,19 +99,43 @@ def lambda_handler(event, context):
         if response.status_code == 200:
             response_data = response.json()
             
-            # Log successful response
+            # Extract content from response
+            raw_response = ""
+            extracted_json = ""
+            extracted_reasoning = ""
+            
+            try:
+                if 'choices' in response_data and len(response_data['choices']) > 0:
+                    raw_response = response_data['choices'][0].get('message', {}).get('content', '')
+                    
+                    # Try to parse JSON from response
+                    import re
+                    json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
+                    if json_match:
+                        extracted_json = json_match.group(0)
+                        # Reasoning is text before JSON
+                        json_start = raw_response.find('{')
+                        if json_start > 0:
+                            extracted_reasoning = raw_response[:json_start].strip()
+            except Exception as e:
+                print(f"Error extracting JSON/reasoning: {e}")
+            
+            # Log successful response with enhanced fields
             dynamodb.update_item(
                 TableName=LOG_TABLE,
                 Key={
                     'call_id': {'S': call_id},
                     'timestamp': {'N': str(int(start_time * 1000))}
                 },
-                UpdateExpression='SET #status = :status, response_json = :resp, latency_ms = :lat',
+                UpdateExpression='SET #status = :status, response_json = :resp, latency_ms = :lat, raw_response = :raw, extracted_json = :ejson, extracted_reasoning = :reas',
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
                     ':status': {'S': 'success'},
                     ':resp': {'S': json.dumps(response_data)},
-                    ':lat': {'N': str(latency_ms)}
+                    ':lat': {'N': str(latency_ms)},
+                    ':raw': {'S': raw_response},
+                    ':ejson': {'S': extracted_json},
+                    ':reas': {'S': extracted_reasoning}
                 }
             )
             

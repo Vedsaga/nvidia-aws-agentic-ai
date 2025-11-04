@@ -337,6 +337,7 @@ class ServerlessStack(Stack):
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
             },
         )
         extract_kriya = _lambda.Function(
@@ -352,6 +353,7 @@ class ServerlessStack(Stack):
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
             },
         )
         build_events = _lambda.Function(
@@ -367,6 +369,7 @@ class ServerlessStack(Stack):
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
+                "SENTENCES_TABLE": sentences_table.table_name,
             },
         )
         audit_events = _lambda.Function(
@@ -441,6 +444,22 @@ class ServerlessStack(Stack):
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name
+            },
+        )
+        
+        # L24: Score Extractions (GSSR Scorer)
+        score_extractions = _lambda.Function(
+            self,
+            "ScoreExtractions",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "kg_agents", "l24_score_extractions")
+            ),
+            timeout=Duration.minutes(15),
+            memory_size=1024,
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
 
@@ -625,6 +644,7 @@ class ServerlessStack(Stack):
             extract_attributes,
             graph_node_ops,
             graph_edge_ops,
+            score_extractions,
             retrieve_from_embedding,
             synthesize_answer,
             get_processing_chain,
@@ -654,6 +674,12 @@ class ServerlessStack(Stack):
         llm_call.grant_invoke(sanitize_doc)
         llm_call.grant_invoke(synthesize_answer)
         llm_call.grant_invoke(query_processor)
+        llm_call.grant_invoke(score_extractions)
+        
+        # Grant extraction Lambdas permission to invoke L24 (Scorer)
+        score_extractions.grant_invoke(extract_entities)
+        score_extractions.grant_invoke(extract_kriya)
+        score_extractions.grant_invoke(build_events)
 
         # Query API permissions
         query_processor.grant_invoke(query_submit)
@@ -678,8 +704,12 @@ class ServerlessStack(Stack):
         # Add LLM function name to agent environments
         for agent_func in [extract_entities, extract_kriya, build_events, audit_events, 
                           extract_relations, extract_attributes, validate_doc, 
-                          sanitize_doc, synthesize_answer]:
+                          sanitize_doc, synthesize_answer, score_extractions]:
             agent_func.add_environment("LLM_CALL_LAMBDA_NAME", llm_call.function_name)
+        
+        # Add scorer function name to extraction agent environments
+        for agent_func in [extract_entities, extract_kriya, build_events]:
+            agent_func.add_environment("SCORER_LAMBDA_NAME", score_extractions.function_name)
         
         # Grant manual trigger permission to invoke L3
         manual_trigger.add_environment("SANITIZE_LAMBDA_NAME", sanitize_doc.function_name)
