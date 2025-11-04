@@ -106,8 +106,12 @@ def lambda_handler(event, context):
         dynamodb.update_item(
             TableName=os.environ.get('SENTENCES_TABLE', 'Sentences'),
             Key={'sentence_hash': {'S': sentence_hash}},
-            UpdateExpression='SET kg_status = :status',
-            ExpressionAttributeValues={':status': {'S': 'kg_done'}}
+            UpdateExpression='SET #status = :status, kg_status = :legacy_status',
+            ExpressionAttributeNames={'#status': 'status'},
+            ExpressionAttributeValues={
+                ':status': {'S': 'KG_COMPLETE'},
+                ':legacy_status': {'S': 'kg_done'}
+            }
         )
         
         # Return original event data

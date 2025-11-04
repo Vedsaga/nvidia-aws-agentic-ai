@@ -8,7 +8,8 @@ def lambda_handler(event, context):
     """
     Check if sentence is already processed (deduplication)
     Input: {'text': ..., 'hash': 'abc...', 'job_id': 'xyz...'}
-    Output: {'kg_status': 'kg_done'} or {'kg_status': 'pending'}
+    Output: {'status': 'KG_COMPLETE', 'kg_status': 'kg_done'} or
+        {'status': 'KG_PENDING', 'kg_status': 'pending'}
     """
     
     sentence_hash = event['hash']
@@ -22,33 +23,37 @@ def lambda_handler(event, context):
         )
         
         if 'Item' in response:
-            # Sentence exists, check if KG processing is done
-            if response['Item'].get('kg_status', {}).get('S') == 'kg_done':
-                # Already processed, skip
-                return {'kg_status': 'kg_done'}
-        
-        # Sentence not found or not done - create/update entry with all required fields
+            status_value = response['Item'].get('status', {}).get('S')
+            legacy_status = response['Item'].get('kg_status', {}).get('S')
+            if status_value == 'KG_COMPLETE' or legacy_status == 'kg_done':
+                return {'status': 'KG_COMPLETE', 'kg_status': 'kg_done'}
+
+        # Sentence not found or not complete - ensure baseline record exists
+        item = {
+            'sentence_hash': {'S': sentence_hash},
+            'original_sentence': {'S': event['text']},
+            'text': {'S': event['text']},  # Legacy key retained for backward compatibility
+            'job_id': {'S': job_id},
+            'document_ids': {'SS': [job_id]},
+            'status': {'S': 'KG_PENDING'},
+            'kg_status': {'S': 'pending'},  # Legacy mirror of status
+            'best_score': {'N': '0'},
+            'needs_review': {'BOOL': False},
+            'attempts_count': {'N': '0'},
+            'd1_attempts': {'N': '0'},
+            'd2a_attempts': {'N': '0'},
+            'd2b_attempts': {'N': '0'}
+        }
+
+        # failure_reason is optional; omit until needed
+
         dynamodb.put_item(
             TableName=os.environ['SENTENCES_TABLE'],
-            Item={
-                'sentence_hash': {'S': sentence_hash},
-                'text': {'S': event['text']},
-                'original_sentence': {'S': event['text']},  # Store original sentence
-                'job_id': {'S': job_id},
-                'document_ids': {'SS': [job_id]},  # Track all source documents
-                'kg_status': {'S': 'pending'},
-                'status': {'S': 'KG_PENDING'},  # Proper status enum
-                'documents': {'SS': [job_id]},  # Keep for backward compatibility
-                'd1_attempts': {'N': '0'},
-                'd2a_attempts': {'N': '0'},
-                'd2b_attempts': {'N': '0'},
-                'needs_review': {'BOOL': False}
-            }
+            Item=item
         )
         
-        return {'kg_status': 'pending'}
+        return {'status': 'KG_PENDING', 'kg_status': 'pending'}
         
     except Exception as e:
         print(f"Error in dedup check: {str(e)}")
-        # Default to pending if error
-        return {'kg_status': 'pending'}
+        return {'status': 'KG_PENDING', 'kg_status': 'pending'}

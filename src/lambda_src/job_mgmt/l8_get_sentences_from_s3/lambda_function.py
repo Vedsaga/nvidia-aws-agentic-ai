@@ -31,10 +31,13 @@ def lambda_handler(event, context):
         # Parse JSON data
         data = json.loads(response['Body'].read().decode('utf-8'))
         
+        sentences_to_process = []
+
         # Create/update sentence records in DynamoDB
         for sentence in data:
             sentence_hash = sentence['hash']
             sentence_text = sentence['text']
+            should_process = True
             
             try:
                 # Check if sentence already exists
@@ -44,32 +47,47 @@ def lambda_handler(event, context):
                 )
                 
                 if 'Item' in existing:
-                    # Sentence exists - check if already processed
-                    if existing['Item'].get('kg_status', {}).get('S') == 'kg_done':
-                        print(f"Sentence {sentence_hash} already processed, skipping")
-                        continue
-                    
-                    # Update existing record to add this job_id to documents
-                    docs = existing['Item'].get('documents', {}).get('SS', [])
-                    if job_id not in docs:
-                        docs.append(job_id)
-                    
+                    item = existing['Item']
+                    status_value = item.get('status', {}).get('S')
+                    legacy_status = item.get('kg_status', {}).get('S')
+                    if status_value == 'KG_COMPLETE' or legacy_status == 'kg_done':
+                        print(f"Sentence {sentence_hash} already complete, skipping reprocessing")
+                        should_process = False
+
+                    docs = set(item.get('document_ids', {}).get('SS', []))
+                    legacy_docs = item.get('documents', {}).get('SS', [])
+                    if not docs and legacy_docs:
+                        docs.update(legacy_docs)
+
+                    docs.add(job_id)
+
                     dynamodb.update_item(
                         TableName=SENTENCES_TABLE,
                         Key={'sentence_hash': {'S': sentence_hash}},
-                        UpdateExpression='SET documents = :docs',
-                        ExpressionAttributeValues={':docs': {'SS': docs}}
+                        UpdateExpression='SET document_ids = :docs, job_id = :job, original_sentence = if_not_exists(original_sentence, :text), text = if_not_exists(text, :text)',
+                        ExpressionAttributeValues={
+                            ':docs': {'SS': sorted(docs)},
+                            ':job': {'S': job_id},
+                            ':text': {'S': sentence_text}
+                        }
                     )
                 else:
-                    # Create new sentence record
                     dynamodb.put_item(
                         TableName=SENTENCES_TABLE,
                         Item={
                             'sentence_hash': {'S': sentence_hash},
+                            'original_sentence': {'S': sentence_text},
                             'text': {'S': sentence_text},
                             'job_id': {'S': job_id},
+                            'document_ids': {'SS': [job_id]},
+                            'status': {'S': 'KG_PENDING'},
                             'kg_status': {'S': 'pending'},
-                            'documents': {'SS': [job_id]}
+                            'best_score': {'N': '0'},
+                            'needs_review': {'BOOL': False},
+                            'attempts_count': {'N': '0'},
+                            'd1_attempts': {'N': '0'},
+                            'd2a_attempts': {'N': '0'},
+                            'd2b_attempts': {'N': '0'}
                         }
                     )
                     print(f"Created sentence record for {sentence_hash}")
@@ -77,9 +95,12 @@ def lambda_handler(event, context):
             except Exception as e:
                 print(f"Error creating sentence record for {sentence_hash}: {e}")
                 # Continue processing other sentences
+            else:
+                if should_process:
+                    sentences_to_process.append(sentence)
         
         # Return sentences array for Step Functions Map state
-        return {'sentences': data}
+        return {'sentences': sentences_to_process}
         
     except Exception as e:
         print(f"Error getting sentences from S3: {str(e)}")

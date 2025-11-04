@@ -64,7 +64,10 @@ def lambda_handler(event, context):
                     )
                     
                     if 'Item' in sentence_response:
-                        sentence_docs = sentence_response['Item'].get('documents', {}).get('SS', [])
+                        item = sentence_response['Item']
+                        sentence_docs = item.get('document_ids', {}).get('SS', [])
+                        if not sentence_docs:
+                            sentence_docs = item.get('documents', {}).get('SS', [])  # Legacy fallback
                         if not any(doc_id in sentence_docs for doc_id in doc_ids):
                             continue
                 

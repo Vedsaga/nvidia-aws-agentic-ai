@@ -41,9 +41,9 @@ def lambda_handler(event, context):
         
         for sent_hash, sent in relevant_items:
             print(f"Processing hash: {sent_hash}")
-            
-            kg_status = sent.get('kg_status', {}).get('S', '')
-            print(f"KG status: {kg_status}")
+
+            sentence_status = sent.get('status', {}).get('S', '') or sent.get('kg_status', {}).get('S', '')
+            print(f"Sentence status: {sentence_status}")
             
             # Load graph to get sentence text and KG
             try:
@@ -91,7 +91,10 @@ def lambda_handler(event, context):
                 traceback.print_exc()
                 
                 # Try to get text from DynamoDB as fallback
-                sent_text = sent.get('text', {}).get('S', 'Text not available')
+                sent_text = (
+                    sent.get('original_sentence', {}).get('S')
+                    or sent.get('text', {}).get('S', 'Text not available')
+                )
                 
                 references.append({
                     'sentence_text': sent_text,
@@ -221,7 +224,12 @@ def embedding_search(query_vector):
                 )
                 
                 if 'Item' in sent_response:
-                    similarities.append((similarity, sent_hash, sent_response['Item']))
+                    item = sent_response['Item']
+                    status_value = item.get('status', {}).get('S')
+                    legacy_status = item.get('kg_status', {}).get('S')
+                    if status_value != 'KG_COMPLETE' and legacy_status != 'kg_done':
+                        continue
+                    similarities.append((similarity, sent_hash, item))
             except Exception as e:
                 print(f"Error processing {sent_hash}: {e}")
                 continue
@@ -241,7 +249,12 @@ def keyword_search(question):
     scored = []
     
     for sent in sentences:
-        sent_text = sent.get('text', {}).get('S', '')
+        status_value = sent.get('status', {}).get('S')
+        legacy_status = sent.get('kg_status', {}).get('S')
+        if status_value != 'KG_COMPLETE' and legacy_status != 'kg_done':
+            continue
+
+        sent_text = sent.get('original_sentence', {}).get('S') or sent.get('text', {}).get('S', '')
         if not sent_text:
             continue
         

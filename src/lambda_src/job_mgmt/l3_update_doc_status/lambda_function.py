@@ -68,10 +68,15 @@ def lambda_handler(event, context):
             TableName='Sentences',  # Using table name directly since not in env
             IndexName='ByJobId',
             KeyConditionExpression='job_id = :jid',
-            FilterExpression='kg_status = :done',
+            FilterExpression='(#status = :done) OR (#legacy_status = :legacy_done)',
+            ExpressionAttributeNames={
+                '#status': 'status',
+                '#legacy_status': 'kg_status'
+            },
             ExpressionAttributeValues={
                 ':jid': {'S': job_id},
-                ':done': {'S': 'kg_done'}
+                ':done': {'S': 'KG_COMPLETE'},
+                ':legacy_done': {'S': 'kg_done'}
             },
             Select='COUNT'
         )

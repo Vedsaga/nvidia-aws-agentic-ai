@@ -62,8 +62,8 @@ Phase 5: Select best JSON (average of pass1 + pass2 scores)
 
 * `[ ]` **KG Pipeline Architecture: GSSR Implementation:** *(Code implemented, testing pending)*
 
-    * `[ ]` **Define Sentence Table & Caching Strategy:**
-        * `[ ]` Define a central "Sentence Table" with the following columns:
+    * `[x]` **Define Sentence Table & Caching Strategy:**
+        * `[x]` Define a central "Sentence Table" with the following columns:
             * `sentence_hash` (Primary Key)
             * `original_sentence` (To store the raw sentence text)
             * `document_ids` (A list/array to track all source documents containing the sentence)
@@ -72,9 +72,9 @@ Phase 5: Select best JSON (average of pass1 + pass2 scores)
             * `failure_reason` (To track why GSSR failed if max attempts reached)
             * `needs_review` (Boolean flag for human review queue)
             * `attempts_count` (Track how many GSSR iterations were needed)
-        * `[ ]` When a new document is ingested, sentences are hashed and added to this table with the `KG_PENDING` status.
-        * `[ ]` The KG processing queue/worker should query this table and select only sentences with the `status = KG_PENDING` for processing.
-        * `[ ]` Before processing, a check should confirm the sentence isn't already `KG_COMPLETE` (as a redundant check for the queue logic).
+        * `[x]` When a new document is ingested, sentences are hashed and added to this table with the `KG_PENDING` status.
+        * `[x]` The KG processing queue/worker should query this table and select only sentences with the `status = KG_PENDING` for processing.
+        * `[x]` Before processing, a check should confirm the sentence isn't already `KG_COMPLETE` (as a redundant check for the queue logic).
 
     * `[ ]` **Implement Comprehensive Logging Strategy:**
         * `[ ]` Create a central `LLMCallLog` table to store all raw LLM requests and responses *as-is* (no cleanup) for complete debugging traceability.
