@@ -3,6 +3,7 @@
     "RawBucket": "raw-documents-151534200269-us-east-1",
     "LLMCallLogTableOutput": "LLMCallLog",
     "KarakaKGApiEndpoint620A272C": "https://8e6lug93f1.execute-api.us-east-1.amazonaws.com/prod/",
+    "LLMCallExtractsTableOutput": "LLMCallExtracts",
     "ApiUrl": "https://8e6lug93f1.execute-api.us-east-1.amazonaws.com/prod/",
     "VerifiedBucket": "verified-documents-151534200269-us-east-1",
     "KGBucket": "knowledge-graph-151534200269-us-east-1",
