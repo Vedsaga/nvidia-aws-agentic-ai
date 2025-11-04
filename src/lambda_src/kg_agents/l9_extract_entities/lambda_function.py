@@ -27,6 +27,14 @@ MAX_ATTEMPTS = 5
 STAGE = "D1_Entities"
 
 
+def clean_event_payload(event):
+    """Return a copy of the event without transient retry flags."""
+    cleaned = dict(event)
+    cleaned.pop('status', None)
+    cleaned.pop('stage', None)
+    return cleaned
+
+
 def get_sentence_attempts(sentence_hash):
     """Get current d1_attempts from Sentences table"""
     try:
@@ -177,7 +185,7 @@ def lambda_handler(event, context):
                 status = response['Item'].get('status', {}).get('S', '')
                 if status == 'KG_COMPLETE':
                     print(f"Sentence {sentence_hash} already complete, skipping")
-                    return event
+                    return clean_event_payload(event)
         except:
             pass
         
@@ -186,7 +194,7 @@ def lambda_handler(event, context):
         
         if current_attempts >= MAX_ATTEMPTS:
             print(f"Max attempts reached for {sentence_hash}")
-            return event
+            return clean_event_payload(event)
         
         # Get previous scorer feedback if this is a retry
         scorer_feedback = get_scorer_feedback(sentence_hash) if current_attempts > 0 else None
@@ -274,7 +282,7 @@ def lambda_handler(event, context):
             best_score = 100
             update_sentence_result(sentence_hash, job_id, best_score, current_attempts + 1, False)
             save_to_s3(sentence_hash, best_json)
-            return event
+            return clean_event_payload(event)
         
         # Phase 3: Scoring Pass 1 (temp=0.0)
         print(f"Phase 3: Scoring Pass 1")
@@ -343,7 +351,7 @@ def lambda_handler(event, context):
         update_sentence_result(sentence_hash, job_id, best_score, current_attempts + 1, needs_review)
         save_to_s3(sentence_hash, best_json)
         
-        return event
+        return clean_event_payload(event)
         
     except Exception as e:
         print(f"Error in entity extraction: {e}")

@@ -764,10 +764,13 @@ class ServerlessStack(Stack):
         # Check if D1 needs retry
         check_d1_retry = sfn.Choice(self, "CheckD1Retry")
         check_d1_retry.when(
-            sfn.Condition.string_equals("$.status", "retry"),
+            sfn.Condition.and_(
+                sfn.Condition.is_present("$.status"),
+                sfn.Condition.string_equals("$.status", "retry")
+            ),
             entities_task  # Loop back to entities
         )
-        
+
         # Kriya second
         kriya_task = tasks.LambdaInvoke(
             self, "KriyaTask", 
@@ -778,7 +781,10 @@ class ServerlessStack(Stack):
         # Check if D2a needs retry
         check_d2a_retry = sfn.Choice(self, "CheckD2aRetry")
         check_d2a_retry.when(
-            sfn.Condition.string_equals("$.status", "retry"),
+            sfn.Condition.and_(
+                sfn.Condition.is_present("$.status"),
+                sfn.Condition.string_equals("$.status", "retry")
+            ),
             kriya_task  # Loop back to kriya
         )
         
@@ -801,7 +807,10 @@ class ServerlessStack(Stack):
         # Check if D2b needs retry
         check_d2b_retry = sfn.Choice(self, "CheckD2bRetry")
         check_d2b_retry.when(
-            sfn.Condition.string_equals("$.status", "retry"),
+            sfn.Condition.and_(
+                sfn.Condition.is_present("$.status"),
+                sfn.Condition.string_equals("$.status", "retry")
+            ),
             build_events_task  # Loop back to build events
         )
 
@@ -834,17 +843,17 @@ class ServerlessStack(Stack):
         # D1 -> Check retry -> D2a -> Check retry -> Embedding -> D2b -> Check retry -> Relations -> Graph
         entities_task.next(check_d1_retry)
         check_d1_retry.otherwise(kriya_task)
-        
+
         kriya_task.next(check_d2a_retry)
         check_d2a_retry.otherwise(embedding_task)
-        
+
         embedding_task.next(build_events_task)
         build_events_task.next(check_d2b_retry)
         check_d2b_retry.otherwise(relations_task)
-        
+
         relations_task.next(graph_node_task)
         graph_node_task.next(graph_edge_task)
-        
+
         sentence_processing_flow = entities_task
 
         # SFN Step 3: Create the Map state to run the sub-workflow
