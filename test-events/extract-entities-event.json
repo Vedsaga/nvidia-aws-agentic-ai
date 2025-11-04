@@ -1,0 +1,6 @@
+{
+  "job_id": "test-job-123",
+  "hash": "abc123def456",
+  "text": "John works at Microsoft in Seattle.",
+  "index": 0
+}

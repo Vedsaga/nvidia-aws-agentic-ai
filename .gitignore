@@ -1,21 +1,48 @@
-# Python
-.venv/
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
 # CDK
 cdk.out/
+.cdk.staging/
+cdk.context.json
 
-# Our Generated Files (DO NOT COMMIT)
-cdk-outputs-model.json
-cdk-outputs-backend.json
-frontend/.env
+# SAM
+.aws-sam/
 
-# Node
-*node_modules
+# LocalStack
+localstack-data/
 
-# Local .env (Contains secret keys)
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Environment
 .env
 
-.kiro_command_output.tmp
+# Lambda Layer
+lambda_layer/python/
+
+# Test outputs
+/tmp/
+test-outputs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
 .kiro_command_output.txt
+.kiro_exec.sh

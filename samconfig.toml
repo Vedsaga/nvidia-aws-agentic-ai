@@ -1,0 +1,8 @@
+version = 0.1
+
+[default.local_invoke.parameters]
+docker_network = "host"
+skip_pull_image = true
+
+[default.build.parameters]
+use_container = true

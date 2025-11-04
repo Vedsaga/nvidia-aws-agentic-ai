@@ -60,9 +60,16 @@ echo "=========================================="
 echo "Step 2: Uploading File to S3"
 echo "=========================================="
 
-curl -s -X PUT "$PRE_SIGNED_URL" \
-  -H "Content-Type: text/plain" \
-  --data-binary "@$TEST_FILE"
+# Use the same upload approach as test-fresh-upload.sh and fail fast on HTTP errors.
+if ! UPLOAD_OUTPUT=$(curl --fail --silent --show-error --upload-file "$TEST_FILE" "$PRE_SIGNED_URL" 2>&1); then
+        echo "❌ File upload failed"
+        echo "$UPLOAD_OUTPUT"
+        exit 1
+fi
+
+if [ -n "$UPLOAD_OUTPUT" ]; then
+        echo "$UPLOAD_OUTPUT"
+fi
 
 echo "✓ File uploaded"
 echo ""
