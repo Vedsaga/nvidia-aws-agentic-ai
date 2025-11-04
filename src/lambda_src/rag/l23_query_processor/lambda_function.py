@@ -11,8 +11,26 @@ lambda_client = boto3.client('lambda')
 KG_BUCKET = os.environ['KG_BUCKET']
 QUERIES_TABLE = os.environ.get('QUERIES_TABLE', 'Queries')
 SENTENCES_TABLE = os.environ.get('SENTENCES_TABLE', 'Sentences')
+JOBS_TABLE = os.environ.get('JOBS_TABLE', 'DocumentJobs')
 LLM_LAMBDA = os.environ['LLM_CALL_LAMBDA_NAME']
 RETRIEVE_LAMBDA = os.environ.get('RETRIEVE_LAMBDA')
+
+ROLE_LABELS = {
+    'Agent': 'Agent (Kartā)',
+    'Object': 'Object (Karma)',
+    'Instrument': 'Instrument (Karaṇa)',
+    'Recipient': 'Recipient (Sampradāna)',
+    'Source': 'Source (Apādāna)',
+    'Location': 'Location (Adhikaraṇa)'
+}
+
+
+def format_edge_label(edge_attrs):
+    """Generate human readable label for a KG edge"""
+    role = edge_attrs.get('karaka_role')
+    if role:
+        return ROLE_LABELS.get(role, role)
+    return edge_attrs.get('edge_type', 'related')
 
 def lambda_handler(event, context):
     """Process query: find relevant sentences, build context, generate answer"""
@@ -38,71 +56,103 @@ def lambda_handler(event, context):
         # 2. Build context with KG from retrieved sentences
         references = []
         context_parts = []
-        
+
         for sent_hash, sent in relevant_items:
             print(f"Processing hash: {sent_hash}")
 
             sentence_status = sent.get('status', {}).get('S', '') or sent.get('kg_status', {}).get('S', '')
             print(f"Sentence status: {sentence_status}")
-            
-            # Load graph to get sentence text and KG
+
+            sentence_text = (
+                sent.get('original_sentence', {}).get('S')
+                or sent.get('text', {}).get('S', 'Text not available')
+            )
+            doc_id = sent.get('job_id', {}).get('S', '')
+            doc_filename = ''
+            if doc_id:
+                try:
+                    job_resp = dynamodb.get_item(
+                        TableName=JOBS_TABLE,
+                        Key={'job_id': {'S': doc_id}}
+                    )
+                    if 'Item' in job_resp:
+                        doc_filename = job_resp['Item'].get('filename', {}).get('S', '')
+                except Exception as meta_err:
+                    print(f"Warning: unable to load job metadata for {doc_id}: {meta_err}")
+
+            kg_snippet = None
+            entity_names = []
+            relations = []
+
+            # Load graph to extract KG snippet
             try:
                 graph_obj = s3.get_object(Bucket=KG_BUCKET, Key=f'graphs/{sent_hash}.gpickle')
                 G = pickle.loads(graph_obj['Body'].read())
-                
-                # Extract sentence text from graph nodes (all nodes have sentence_text)
-                sent_text = ''
-                if G.number_of_nodes() > 0:
-                    first_node = list(G.nodes(data=True))[0]
-                    sent_text = first_node[1].get('sentence_text', '')
-                
-                print(f"Sentence text from graph: {sent_text}")
-                
-                nodes = [{'id': n, **G.nodes[n]} for n in G.nodes()]
-                edges = [{'source': e[0], 'target': e[1], **e[2]} for e in G.edges(data=True)]
-                print(f"Found {len(nodes)} nodes, {len(edges)} edges")
-                
-                # Extract job_id from graph nodes
-                job_id = ''
-                if G.number_of_nodes() > 0:
-                    first_node = list(G.nodes(data=True))[0]
-                    job_id = first_node[1].get('job_id', '')
-                
-                references.append({
-                    'sentence_text': sent_text,
-                    'sentence_hash': sent_hash,
-                    'doc_id': job_id,
-                    'kg_snippet': {'nodes': nodes, 'edges': edges}
-                })
-                
-                # Build context with entities and relationships
-                entity_names = [n['id'] for n in nodes]
-                relations = [f"{e['source']}-{e.get('relation', 'related')}->{e['target']}" for e in edges]
-                
-                context_parts.append(
-                    f"Sentence: {sent_text}\n"
-                    f"Entities: {', '.join(entity_names)}\n"
-                    f"Relations: {', '.join(relations)}"
-                )
-                
+
+                kg_nodes = []
+                for node_id, attrs in G.nodes(data=True):
+                    node_type = attrs.get('node_type', '').lower()
+                    if node_type == 'event_instance':
+                        display_label = attrs.get('surface_text') or attrs.get('kriya_concept') or node_id
+                        display_type = 'EVENT'
+                    else:
+                        display_label = node_id
+                        entity_type = attrs.get('entity_type') or attrs.get('node_type') or 'ENTITY'
+                        display_type = entity_type.upper()
+                    kg_nodes.append({
+                        'id': node_id,
+                        'label': display_label,
+                        'type': display_type
+                    })
+                    if node_type != 'event_instance':
+                        entity_names.append(display_label)
+
+                def format_edge_label(edge_attrs):
+                    role = edge_attrs.get('karaka_role')
+                    if not role:
+                        return edge_attrs.get('edge_type', 'related')
+                    mapping = {
+                        'Agent': 'Agent (Kartā)',
+                        'Object': 'Object (Karma)',
+                        'Instrument': 'Instrument (Karaṇa)',
+                        'Recipient': 'Recipient (Sampradāna)',
+                        'Source': 'Source (Apādāna)',
+                        'Location': 'Location (Adhikaraṇa)'
+                    }
+                    return mapping.get(role, role)
+
+                kg_edges = []
+                for source, target, edge_attrs in G.edges(data=True):
+                    label = format_edge_label(edge_attrs)
+                    kg_edges.append({
+                        'source': source,
+                        'target': target,
+                        'label': label
+                    })
+                    relations.append(f"{source}-{label}->{target}")
+
+                kg_snippet = {'nodes': kg_nodes, 'edges': kg_edges}
+
             except Exception as e:
                 print(f"Error loading graph for {sent_hash}: {e}")
                 import traceback
                 traceback.print_exc()
-                
-                # Try to get text from DynamoDB as fallback
-                sent_text = (
-                    sent.get('original_sentence', {}).get('S')
-                    or sent.get('text', {}).get('S', 'Text not available')
-                )
-                
-                references.append({
-                    'sentence_text': sent_text,
-                    'sentence_hash': sent_hash,
-                    'doc_id': sent.get('job_id', {}).get('S', ''),
-                    'kg_snippet': None
-                })
-                context_parts.append(f"Sentence: {sent_text}")
+
+            references.append({
+                'sentence_text': sentence_text,
+                'sentence_hash': sent_hash,
+                'doc_id': doc_id,
+                'doc_filename': doc_filename,
+                'llm_calls_for_sentence': None,
+                'kg_snippet': kg_snippet
+            })
+
+            context_entry = [f"Sentence: {sentence_text}"]
+            if entity_names:
+                context_entry.append(f"Entities: {', '.join(entity_names)}")
+            if relations:
+                context_entry.append(f"Relations: {', '.join(relations)}")
+            context_parts.append('\n'.join(context_entry))
         
         print(f"Built {len(references)} references")
         
@@ -138,7 +188,12 @@ def lambda_handler(event, context):
             }
         )
         
-        return {'status': 'completed', 'query_id': query_id}
+        return {
+            'status': 'completed',
+            'query_id': query_id,
+            'answer': answer,
+            'references': references
+        }
         
     except Exception as e:
         print(f"Error: {str(e)}")
