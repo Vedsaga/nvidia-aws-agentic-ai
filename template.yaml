@@ -12,7 +12,7 @@ Globals:
         JOBS_TABLE: DocumentJobs
         SENTENCES_TABLE: Sentences
         LLM_CALL_LOG_TABLE: LLMCallLog
-  LLM_CALL_PARSED_TABLE: LLMCallExtracts
+        LLM_CALL_PARSED_TABLE: LLMCallExtracts
         RAW_BUCKET: !Ref RawBucket
         VERIFIED_BUCKET: !Ref VerifiedBucket
         KG_BUCKET: !Ref KGBucket
@@ -118,6 +118,8 @@ Resources:
           AttributeType: N
         - AttributeName: sentence_hash
           AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
       KeySchema:
         - AttributeName: call_id
           KeyType: HASH
@@ -127,6 +129,14 @@ Resources:
         - IndexName: BySentenceHash
           KeySchema:
             - AttributeName: sentence_hash
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ByJobId
+          KeySchema:
+            - AttributeName: job_id
               KeyType: HASH
             - AttributeName: timestamp
               KeyType: RANGE

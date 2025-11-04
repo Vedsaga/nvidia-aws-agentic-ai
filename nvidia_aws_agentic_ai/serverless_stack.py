@@ -141,6 +141,16 @@ class ServerlessStack(Stack):
             ),
         )
 
+        llm_extracts_table.add_global_secondary_index(
+            index_name="ByJobId",
+            partition_key=dynamodb.Attribute(
+                name="job_id", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp", type=dynamodb.AttributeType.NUMBER
+            ),
+        )
+
         # ========================================
         # LAMBDA LAYERS
         # ========================================
