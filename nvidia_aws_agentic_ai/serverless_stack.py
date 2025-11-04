@@ -517,7 +517,10 @@ class ServerlessStack(Stack):
             ),
             timeout=Duration.minutes(15),
             memory_size=1024,
-            environment={"KG_BUCKET": kg_bucket.bucket_name},
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
+                "EMBEDDING_LAMBDA": embedding_call.function_name,
+            },
         )
         synthesize_answer = _lambda.Function(
             self,

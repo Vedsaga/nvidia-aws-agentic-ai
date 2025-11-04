@@ -31,6 +31,11 @@ if [ -z "$API_URL" ]; then
     exit 1
 fi
 
+# Ensure API_URL ends with /
+if [[ ! "$API_URL" =~ /$ ]]; then
+    API_URL="${API_URL}/"
+fi
+
 LLM_CALL_LOG_TABLE="${LLM_CALL_LOG_TABLE:-LLMCallLog}"
 LLM_CALL_PARSED_TABLE="${LLM_CALL_PARSED_TABLE:-LLMCallExtracts}"
 SENTENCES_TABLE="${SENTENCES_TABLE:-Sentences}"
@@ -357,85 +362,45 @@ QUESTION="Who worked at the Berlin Institute?"
 echo "Question: $QUESTION"
 echo ""
 
-QUERY_SUBMIT=$(curl -s -X POST "${API_URL}query/submit" \
+# Note: Using POST /query endpoint (not /query/submit)
+QUERY_RESPONSE=$(curl -s -X POST "${API_URL}query" \
   -H "Content-Type: application/json" \
-  -d "{\"question\": \"$QUESTION\"}")
+  -d "{\"query\": \"$QUESTION\"}")
 
-echo "$QUERY_SUBMIT" | jq '.'
+echo "$QUERY_RESPONSE" | jq '.'
 
-QUERY_ID=$(echo "$QUERY_SUBMIT" | jq -r '.query_id')
-
-if [ -z "$QUERY_ID" ] || [ "$QUERY_ID" == "null" ]; then
-    echo "❌ Failed to get query_id"
+# Check if query succeeded
+if echo "$QUERY_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
+    echo "❌ Query failed!"
+    echo "$QUERY_RESPONSE" | jq '.'
     exit 1
 fi
 
 echo ""
-echo "✓ Query ID: $QUERY_ID"
+echo "✓ Query completed (synchronous response)"
 echo ""
 
-# Step 7: Poll for query answer
+# Step 7: Display final answer with context
 echo "=========================================="
-echo "Step 7: Waiting for Answer Synthesis"
-echo "=========================================="
-echo "This shows: Embedding retrieval → Graph fetch → LLM synthesis"
-echo ""
-
-MAX_QUERY_CHECKS=30
-QUERY_CHECK_COUNT=0
-ANSWER_READY=false
-
-while [ $QUERY_CHECK_COUNT -lt $MAX_QUERY_CHECKS ]; do
-    QUERY_CHECK_COUNT=$((QUERY_CHECK_COUNT + 1))
-
-    sleep 2
-
-    QUERY_STATUS=$(curl -s "${API_URL}query/status/${QUERY_ID}")
-
-    STATUS=$(echo "$QUERY_STATUS" | jq -r '.status')
-
-    echo "Check $QUERY_CHECK_COUNT: Status=$STATUS"
-
-    if [ "$STATUS" == "completed" ]; then
-        ANSWER_READY=true
-        echo ""
-        echo "✓ Answer ready!"
-        break
-    elif [ "$STATUS" == "failed" ]; then
-        echo ""
-        echo "❌ Query failed!"
-        echo "$QUERY_STATUS" | jq '.'
-        exit 1
-    fi
-done
-
-if [ "$ANSWER_READY" = false ]; then
-    echo ""
-    echo "⚠️  Query timeout"
-    exit 1
-fi
-
-# Step 8: Display final answer with context
-echo "=========================================="
-echo "Step 8: Final Answer with Context"
+echo "Step 7: Final Answer with Context"
 echo "=========================================="
 echo ""
 
-echo "$QUERY_STATUS" | jq '.' > "$LOG_DIR/query-final.json"
-echo "$QUERY_STATUS" | jq '.'
+echo "$QUERY_RESPONSE" | jq '.' > "$LOG_DIR/query-final.json"
+echo "$QUERY_RESPONSE" | jq '.'
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "ANSWER:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "$QUERY_STATUS" | jq -r '.answer'
+echo "$QUERY_RESPONSE" | jq -r '.answer'
 echo ""
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "SUPPORTING EVIDENCE:"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-REFERENCES=$(echo "$QUERY_STATUS" | jq -c '.references // [] | .[]')
+REFERENCES=$(echo "$QUERY_RESPONSE" | jq -c '.references // [] | .[]')
 
 if [ -n "$REFERENCES" ]; then
     echo "$REFERENCES" | while IFS= read -r ref; do
@@ -453,7 +418,7 @@ if [ -n "$REFERENCES" ]; then
 
         echo ""
     echo "   Edges:"
-    echo "$ref" | jq -r '.kg_snippet.edges // [] | .[] | "      - \(.source) → \(.target) [\(.karaka_role)]"'
+    echo "$ref" | jq -r '.kg_snippet.edges // [] | .[] | "      - \(.source) → \(.target) [\(.label)]"'
 
         echo ""
         echo "   ─────────────────────────────────────────"
@@ -464,9 +429,9 @@ fi
 
 echo ""
 
-# Step 9: GSSR quality metrics and temperature/attempt distribution
+# Step 8: GSSR quality metrics and temperature/attempt distribution
 echo "=========================================="
-echo "Step 9: GSSR Quality Metrics"
+echo "Step 8: GSSR Quality Metrics"
 echo "=========================================="
 echo ""
 

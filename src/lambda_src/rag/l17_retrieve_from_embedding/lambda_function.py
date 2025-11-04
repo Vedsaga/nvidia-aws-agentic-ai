@@ -10,6 +10,7 @@ lambda_client = boto3.client("lambda")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
+EMBEDDING_LAMBDA = os.environ.get("EMBEDDING_LAMBDA", "EmbeddingCall")
 
 def lambda_handler(event, context):
     """
@@ -30,7 +31,7 @@ def lambda_handler(event, context):
         }
         
         embedding_response = lambda_client.invoke(
-            FunctionName='EmbeddingCall',  # Function name from CDK
+            FunctionName=EMBEDDING_LAMBDA,
             Payload=json.dumps(embedding_payload)
         )
         
