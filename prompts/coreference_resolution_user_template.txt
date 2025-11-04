@@ -1,6 +1,0 @@
-Pronoun/Reference: "{hint}"
-
-Context:
-{context}
-
-What does this refer to? Return the full entity name.

@@ -1,6 +1,0 @@
-Question: {question}
-
-Context:
-{context}
-
-Natural Answer:

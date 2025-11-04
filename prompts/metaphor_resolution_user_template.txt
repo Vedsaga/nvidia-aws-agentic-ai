@@ -1,6 +1,0 @@
-Metaphorical reference: "{metaphor}"
-
-Context:
-{context}
-
-What is the actual entity being referred to?

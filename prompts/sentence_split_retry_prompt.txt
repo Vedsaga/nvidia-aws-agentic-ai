@@ -1,8 +1,0 @@
-ERROR: Your previous split lost {missing_chars} characters at position {error_pos}.
-
-Problem: "...{context_snippet}..."
-
-You MUST include the space after each period with that sentence.
-Example: "Hello. World" → ["Hello. ", "World"]
-
-Re-split preserving EVERY character. Return JSON array only.

@@ -1,2 +1,0 @@
-Score this query decomposition from 1-100.
-Return JSON: {"score": <number>, "reasoning": "<text>"}

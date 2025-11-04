@@ -1,3 +1,0 @@
-Given original text and multiple extraction candidates, choose the best one.
-Return JSON: {"choice": "<candidate_id>", "reasoning": "<text>"}
-If all invalid, return: {"choice": "ALL_INVALID", "reasoning": "<text>"}
