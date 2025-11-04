@@ -128,4 +128,4 @@ IMPORTANT:
 - Do not add extra fields or comments
 
 USER QUESTION:
-{{USER_QUESTION_HERE}}
+{USER_QUESTION_HERE}

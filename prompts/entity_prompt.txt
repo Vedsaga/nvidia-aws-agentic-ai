@@ -4,10 +4,10 @@ Return JSON array of entity names only:
 
 Example:
 Sentence: "Rama eats mango."
-Output: {{"entities": ["Rama", "mango"]}}
+Output: {"entities": ["Rama", "mango"]}
 
 Sentence: "Sita teaches Rama."
-Output: {{"entities": ["Sita", "Rama"]}}
+Output: {"entities": ["Sita", "Rama"]}
 
 SENTENCE:
 {SENTENCE_HERE}

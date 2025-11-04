@@ -10,7 +10,7 @@ echo "=== Fresh Upload Test ==="
 echo ""
 
 # 1. Create test file
-echo "Rama eats mango." > test-fresh.txt
+echo "Rama is a very good boy." > test-fresh.txt
 echo "Created test file: test-fresh.txt"
 echo ""
 
@@ -52,10 +52,10 @@ for i in {1..60}; do
     
     # Now test query
     echo ""
-    echo "4. Testing query: Who eats mango?"
+    echo "4. Testing query: How was RAM?"
     QUERY_RESPONSE=$(curl -s -X POST "$API_URL/query/submit" \
       -H "Content-Type: application/json" \
-      -d '{"question": "Who eats mango?"}')
+      -d '{"question": "How was RAM?"}')
     
     echo "$QUERY_RESPONSE" | jq .
     QUERY_ID=$(echo "$QUERY_RESPONSE" | jq -r '.query_id')

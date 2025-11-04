@@ -2,16 +2,16 @@ correction_prompt: |
   You previously extracted entities/events/kārakas from this sentence, but made errors.
 
   ORIGINAL SENTENCE:
-  {{SENTENCE_HERE}}
+  {SENTENCE_HERE}
 
   YOUR PREVIOUS JSON (INCORRECT):
-  {{FAILED_JSON}}
+  {FAILED_JSON}
 
   YOUR PREVIOUS REASONING:
-  {{ORIGINAL_REASONING}}
+  {ORIGINAL_REASONING}
 
   ERRORS FOUND:
-  {{ERROR_DESCRIPTIONS}}
+  {ERROR_DESCRIPTIONS}
 
   CRITICAL: Every text span you extract MUST appear EXACTLY as written in the original sentence.
   - Do not invent text

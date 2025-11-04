@@ -14,12 +14,12 @@ Example:
 Sentence: "Rama eats mango."
 Entities: ["Rama", "mango"]
 Verb: "eat"
-Output: {{"karakas": [{{"role": "Agent", "entity": "Rama"}}, {{"role": "Object", "entity": "mango"}}]}}
+Output: {"karakas": [{{"role": "Agent", "entity": "Rama"}, {"role": "Object", "entity": "mango"}]}}
 
 Sentence: "Sita teaches Rama in school."
 Entities: ["Sita", "Rama", "school"]
 Verb: "teach"
-Output: {{"karakas": [{{"role": "Agent", "entity": "Sita"}}, {{"role": "Object", "entity": "Rama"}}, {{"role": "Location", "entity": "school"}}]}}
+Output: {"karakas": [{{"role": "Agent", "entity": "Sita"}, {"role": "Object", "entity": "Rama"}, {"role": "Location", "entity": "school"}]}}
 
 SENTENCE:
 {SENTENCE_HERE}

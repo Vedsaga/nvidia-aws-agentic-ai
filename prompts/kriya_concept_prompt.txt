@@ -4,10 +4,10 @@ Return JSON with verb only:
 
 Example:
 Sentence: "Rama eats mango."
-Output: {{"verb": "eat"}}
+Output: {"verb": "eat"}
 
 Sentence: "Sita teaches Rama."
-Output: {{"verb": "teach"}}
+Output: {"verb": "teach"}
 
 SENTENCE:
 {SENTENCE_HERE}

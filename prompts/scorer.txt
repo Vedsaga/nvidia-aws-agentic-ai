@@ -80,13 +80,13 @@ IMPORTANT NOTES:
 - If all 3 JSONs have the same critical error, all 3 can score below 70
 
 SENTENCE:
-{{SENTENCE_HERE}}
+{SENTENCE_HERE}
 
 JSON_1:
-{{JSON_1}}
+{JSON_1}
 
 JSON_2:
-{{JSON_2}}
+{JSON_2}
 
 JSON_3:
-{{JSON_3}}
+{JSON_3}

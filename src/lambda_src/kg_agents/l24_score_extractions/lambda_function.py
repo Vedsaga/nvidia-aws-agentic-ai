@@ -8,8 +8,7 @@ import boto3
 import sys
 
 # Add shared utilities to path
-sys.path.append('/opt/python')
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
 
 from gssr_utils import parse_scorer_response
 
@@ -73,13 +72,7 @@ def lambda_handler(event, context):
                 'error': 'Failed to load scorer prompt'
             }
         
-        # Format prompt with sentence and 3 JSONs
-        formatted_prompt = prompt_template.replace('{{SENTENCE_HERE}}', sentence)
-        formatted_prompt = formatted_prompt.replace('{{JSON_1}}', json.dumps(json1, indent=2))
-        formatted_prompt = formatted_prompt.replace('{{JSON_2}}', json.dumps(json2, indent=2))
-        formatted_prompt = formatted_prompt.replace('{{JSON_3}}', json.dumps(json3, indent=2))
-        
-        # Call LLM
+        # Call LLM with proper inputs
         llm_payload = {
             'job_id': job_id,
             'sentence_hash': sentence_hash,
@@ -87,7 +80,10 @@ def lambda_handler(event, context):
             'prompt_name': 'scorer.txt',
             'temperature': temperature,
             'inputs': {
-                'formatted_prompt': formatted_prompt
+                'SENTENCE_HERE': sentence,
+                'JSON_1': json.dumps(json1, indent=2),
+                'JSON_2': json.dumps(json2, indent=2),
+                'JSON_3': json.dumps(json3, indent=2)
             }
         }
         
@@ -118,3 +114,4 @@ def lambda_handler(event, context):
             'scores': [0, 0, 0],
             'error': str(e)
         }
+

@@ -8,7 +8,7 @@ import boto3
 import sys
 
 # Add shared utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'shared'))
+sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
 
 from json_schemas import D2B_SCHEMA, validate_schema
 from fidelity_validator import validate_d2b_fidelity
@@ -44,15 +44,34 @@ def get_sentence_attempts(sentence_hash):
         return 0
 
 
+def get_scorer_feedback(sentence_hash):
+    """Get previous scorer feedback"""
+    try:
+        response = dynamodb.get_item(TableName=SENTENCES_TABLE, Key={'sentence_hash': {'S': sentence_hash}})
+        if 'Item' in response and 'scorer_feedback' in response['Item']:
+            return response['Item']['scorer_feedback']['S']
+        return None
+    except:
+        return None
+
+
 def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_review, failure_reason=None):
     """Update Sentences table with GSSR results"""
+    STATUS_KG_COMPLETE = 'KG_COMPLETE'
+    STATUS_KG_IN_PROGRESS = 'KG_IN_PROGRESS'
+    STATUS_NEEDS_REVIEW = 'NEEDS_REVIEW'
+    
     try:
-        update_expr = "SET d2b_attempts = :att, best_score = :score, needs_review = :review"
+        status = STATUS_NEEDS_REVIEW if (needs_review and attempts >= MAX_ATTEMPTS) else (STATUS_KG_IN_PROGRESS if needs_review else STATUS_KG_COMPLETE)
+        
+        update_expr = "SET d2b_attempts = :att, best_score = :score, needs_review = :review, #st = :status"
         expr_values = {
             ':att': {'N': str(attempts)},
             ':score': {'N': str(best_score)},
-            ':review': {'BOOL': needs_review}
+            ':review': {'BOOL': needs_review},
+            ':status': {'S': status}
         }
+        expr_names = {'#st': 'status'}
         
         if failure_reason:
             update_expr += ", failure_reason = :reason"
@@ -62,7 +81,8 @@ def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_re
             TableName=SENTENCES_TABLE,
             Key={'sentence_hash': {'S': sentence_hash}},
             UpdateExpression=update_expr,
-            ExpressionAttributeValues=expr_values
+            ExpressionAttributeValues=expr_values,
+            ExpressionAttributeNames=expr_names
         )
     except Exception as e:
         print(f"Error updating sentence: {e}")
@@ -94,11 +114,15 @@ def load_d2a_output(sentence_hash):
         return {'kriyās': []}
 
 
-def call_llm(sentence, entities_json, kriyas_json, sentence_hash, job_id, temperature, attempt, generation):
+def call_llm(sentence, entities_json, kriyas_json, sentence_hash, job_id, temperature, attempt, generation, scorer_feedback=None):
     """Call LLM with D1 and D2a outputs"""
     # Format entities and kriyas for prompt
     entities_str = json.dumps(entities_json.get('entities', []), indent=2)
     kriyas_str = json.dumps(kriyas_json.get('kriyās', []), indent=2)
+    
+    sentence_with_feedback = sentence
+    if scorer_feedback and attempt > 1:
+        sentence_with_feedback = f"{sentence}\n\nNOTE - Previous attempt feedback: {scorer_feedback[:300]}"
     
     payload = {
         'job_id': job_id,
@@ -109,9 +133,9 @@ def call_llm(sentence, entities_json, kriyas_json, sentence_hash, job_id, temper
         'attempt_number': attempt,
         'generation_index': generation,
         'inputs': {
-            'SENTENCE_HERE': sentence,
-            'INPUT_ENTITIES': entities_str,
-            'INPUT_KRIYAS': kriyas_str
+            'SENTENCE_HERE': sentence_with_feedback,
+            'ENTITY_LIST_JSON': entities_str,
+            'KRIYA_LIST_JSON': kriyas_str
         }
     }
     
@@ -178,12 +202,15 @@ def lambda_handler(event, context):
             print(f"Max attempts reached for {sentence_hash}")
             return event
         
+        # Get previous scorer feedback
+        scorer_feedback = get_scorer_feedback(sentence_hash) if current_attempts > 0 else None
+        
         # Phase 1: Generate 3 JSONs (temp=0.6, sequential)
         print(f"Phase 1: Generating 3 JSONs for {sentence_hash}")
         raw_jsons = []
         for i in range(3):
             llm_response = call_llm(text, entities_json, kriyas_json, sentence_hash, 
-                                   job_id, 0.6, current_attempts + 1, i + 1)
+                                   job_id, 0.6, current_attempts + 1, i + 1, scorer_feedback)
             
             # Extract content from LLM response
             content = ""
@@ -198,7 +225,7 @@ def lambda_handler(event, context):
                 print(f"Failed to parse JSON from generation {i+1}")
                 raw_jsons.append({'event_instances': []})
         
-        # Phase 2: Fidelity check each JSON
+        # Phase 2: Fidelity check each JSON with correction loop
         print(f"Phase 2: Fidelity check")
         valid_jsons = []
         for i, json_data in enumerate(raw_jsons):
@@ -213,6 +240,41 @@ def lambda_handler(event, context):
             is_valid_fidelity, fidelity_errors = validate_d2b_fidelity(json_data, text, entities_json)
             if not is_valid_fidelity:
                 print(f"JSON {i+1} failed fidelity check: {fidelity_errors}")
+                # Try correction once
+                correction_payload = {
+                    'job_id': job_id,
+                    'sentence_hash': sentence_hash,
+                    'stage': f'{STAGE}_Correction',
+                    'prompt_name': 'correction_prompt.txt',
+                    'temperature': 0.3,
+                    'attempt_number': current_attempts + 1,
+                    'generation_index': i + 1,
+                    'inputs': {
+                        'SENTENCE_HERE': text,
+                        'FAILED_JSON': json.dumps(json_data, indent=2),
+                        'ORIGINAL_REASONING': '',
+                        'ERROR_DESCRIPTIONS': '\n'.join(fidelity_errors)
+                    }
+                }
+                try:
+                    correction_response = lambda_client.invoke(
+                        FunctionName=LLM_LAMBDA,
+                        InvocationType='RequestResponse',
+                        Payload=json.dumps(correction_payload)
+                    )
+                    corrected_llm = json.loads(correction_response['Payload'].read())
+                    corrected_content = corrected_llm.get('choices', [{}])[0].get('message', {}).get('content', '')
+                    corrected_json = parse_llm_json_response(corrected_content)
+                    
+                    if corrected_json:
+                        is_valid_corrected, _ = validate_d2b_fidelity(corrected_json, text, entities_json)
+                        if is_valid_corrected:
+                            print(f"JSON {i+1} corrected successfully")
+                            json_data = corrected_json
+                        else:
+                            print(f"JSON {i+1} correction failed, using original")
+                except Exception as e:
+                    print(f"Correction error for JSON {i+1}: {e}")
             
             valid_jsons.append(json_data)
         
@@ -235,8 +297,13 @@ def lambda_handler(event, context):
         
         if all(s < 70 for s in scores_pass1):
             print("All scores < 70 in Pass 1, retrying...")
+            scorer_feedback = f"Previous attempt {current_attempts + 1} scores: {scores_pass1}. Reasoning: {scorer_result1.get('raw_response', '')[:500]}"
             update_sentence_result(sentence_hash, job_id, max(scores_pass1), current_attempts + 1, 
-                                 True, "Low scores in Pass 1")
+                                 True, f"Low scores in Pass 1: {scores_pass1}")
+            try:
+                dynamodb.put_item(TableName=SENTENCES_TABLE, Item={'sentence_hash': {'S': sentence_hash}, 'scorer_feedback': {'S': scorer_feedback}})
+            except:
+                pass
             return {'status': 'retry', 'stage': STAGE, **event}
         
         # Phase 4: Scoring Pass 2 (temp=0.3)
@@ -249,8 +316,13 @@ def lambda_handler(event, context):
         if all(s < 70 for s in scores_pass2):
             if current_attempts + 1 < MAX_ATTEMPTS:
                 print("All scores < 70 in Pass 2, retrying...")
+                scorer_feedback = f"Attempt {current_attempts + 1} - Pass1: {scores_pass1}, Pass2: {scores_pass2}. Feedback: {scorer_result2.get('raw_response', '')[:500]}"
                 update_sentence_result(sentence_hash, job_id, max(scores_pass2), current_attempts + 1,
-                                     True, "Low scores in Pass 2")
+                                     True, f"Low scores in Pass 2: {scores_pass2}")
+                try:
+                    dynamodb.put_item(TableName=SENTENCES_TABLE, Item={'sentence_hash': {'S': sentence_hash}, 'scorer_feedback': {'S': scorer_feedback}})
+                except:
+                    pass
                 return {'status': 'retry', 'stage': STAGE, **event}
             else:
                 print("Max attempts reached, using best available")
@@ -275,3 +347,4 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
         return {'status': 'error', 'error': str(e), **event}
+

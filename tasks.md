@@ -60,7 +60,7 @@ Phase 5: Select best JSON (average of pass1 + pass2 scores)
 
 ---
 
-* `[ ]` **KG Pipeline Architecture: GSSR Implementation:**
+* `[ ]` **KG Pipeline Architecture: GSSR Implementation:** *(Code implemented, testing pending)*
 
     * `[ ]` **Define Sentence Table & Caching Strategy:**
         * `[ ]` Define a central "Sentence Table" with the following columns:

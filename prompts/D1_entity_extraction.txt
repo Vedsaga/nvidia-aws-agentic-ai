@@ -98,4 +98,4 @@ All entities verified to exist in original sentence.
 IMPORTANT: Your JSON must have ONLY these fields: "text" and "type". Do not add extra fields.
 
 SENTENCE:
-{{SENTENCE_HERE}}
+{SENTENCE_HERE}

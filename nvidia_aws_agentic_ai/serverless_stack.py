@@ -323,6 +323,23 @@ class ServerlessStack(Stack):
             },
         )
 
+        # L24: Score Extractions (GSSR Scorer) - Must be defined before L9-L11
+        score_extractions = _lambda.Function(
+            self,
+            "ScoreExtractions",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="lambda_function.lambda_handler",
+            code=_lambda.Code.from_asset(
+                os.path.join("src", "lambda_src", "kg_agents", "l24_score_extractions")
+            ),
+            timeout=Duration.minutes(15),
+            memory_size=1024,
+            environment={
+                "KG_BUCKET": kg_bucket.bucket_name,
+                "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
+            },
+        )
+
         # L9-L16: KG Agent & Graph Ops Functions (All used by SFN)
         extract_entities = _lambda.Function(
             self,
@@ -338,6 +355,8 @@ class ServerlessStack(Stack):
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
+                "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
+                "SCORER_LAMBDA_NAME": score_extractions.function_name,
             },
         )
         extract_kriya = _lambda.Function(
@@ -354,6 +373,8 @@ class ServerlessStack(Stack):
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
+                "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
+                "SCORER_LAMBDA_NAME": score_extractions.function_name,
             },
         )
         build_events = _lambda.Function(
@@ -370,6 +391,8 @@ class ServerlessStack(Stack):
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
+                "LLM_CALL_LAMBDA_NAME": llm_call.function_name,
+                "SCORER_LAMBDA_NAME": score_extractions.function_name,
             },
         )
         audit_events = _lambda.Function(
@@ -444,22 +467,6 @@ class ServerlessStack(Stack):
             environment={
                 "KG_BUCKET": kg_bucket.bucket_name,
                 "SENTENCES_TABLE": sentences_table.table_name
-            },
-        )
-        
-        # L24: Score Extractions (GSSR Scorer)
-        score_extractions = _lambda.Function(
-            self,
-            "ScoreExtractions",
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset(
-                os.path.join("src", "lambda_src", "kg_agents", "l24_score_extractions")
-            ),
-            timeout=Duration.minutes(15),
-            memory_size=1024,
-            environment={
-                "KG_BUCKET": kg_bucket.bucket_name,
             },
         )
 
@@ -745,32 +752,33 @@ class ServerlessStack(Stack):
             result_path="$.sentence_data",  # Puts output at {"sentence_data": {"sentences": [...]}}
         )
 
-        # SFN Step 2: Simplified KG extraction per sentence
-        # Extract entities and kriya in parallel, plus embedding
+        # SFN Step 2: KG extraction - Sequential with GSSR retry
+        # Entities first
         entities_task = tasks.LambdaInvoke(
             self,
             "EntitiesTask",
             lambda_function=extract_entities,
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
+            result_path=sfn.JsonPath.DISCARD,
         )
+        
+        # Kriya second
         kriya_task = tasks.LambdaInvoke(
             self, "KriyaTask", 
             lambda_function=extract_kriya, 
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
+            result_path=sfn.JsonPath.DISCARD,
         )
+        
+        # Embedding third
         embedding_task = tasks.LambdaInvoke(
             self, "EmbeddingTask",
             lambda_function=embedding_call,
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,  # Discard result, keep original input
+            result_path=sfn.JsonPath.DISCARD,
         )
-        
-        parallel_extraction = sfn.Parallel(self, "ParallelExtraction", result_path=sfn.JsonPath.DISCARD)
-        parallel_extraction.branch(entities_task).branch(kriya_task).branch(embedding_task)
 
-        # Build events from entities and kriya
+        # Build events fourth
         build_events_task = tasks.LambdaInvoke(
             self,
             "BuildEventsTask",
@@ -804,9 +812,11 @@ class ServerlessStack(Stack):
             result_path=sfn.JsonPath.DISCARD,
         )
 
-        # Chain: Extract -> Build Events -> Relations -> Graph Storage (sequential)
+        # Chain: Sequential processing (GSSR needs sequential for D2b dependency on D1/D2a)
         sentence_processing_flow = (
-            parallel_extraction
+            entities_task
+            .next(kriya_task)
+            .next(embedding_task)
             .next(build_events_task)
             .next(relations_task)
             .next(graph_node_task)
