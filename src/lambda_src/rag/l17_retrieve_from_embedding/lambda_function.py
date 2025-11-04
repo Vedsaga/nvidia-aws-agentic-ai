@@ -27,16 +27,34 @@ def lambda_handler(event, context):
         embedding_payload = {
             'text': query,
             'hash': 'query_temp',
-            'job_id': 'query'
+            'job_id': 'query',
+            'store': False,
+            'return_vector': True
         }
-        
+
         embedding_response = lambda_client.invoke(
             FunctionName=EMBEDDING_LAMBDA,
             Payload=json.dumps(embedding_payload)
         )
-        
-        # Get query vector (this is a simplified approach)
-        # In production, you'd want to use a proper vector database like FAISS
+
+        if 'FunctionError' in embedding_response:
+            raise RuntimeError(f"Embedding lambda error: {embedding_response['FunctionError']}")
+
+        response_payload = embedding_response['Payload'].read()
+        if not response_payload:
+            raise RuntimeError('No payload received from embedding lambda')
+
+        payload_json = json.loads(response_payload)
+        if payload_json.get('status') == 'error':
+            raise RuntimeError(payload_json.get('error', 'Embedding lambda returned error state'))
+        query_embedding = payload_json.get('embedding')
+        if not query_embedding:
+            raise RuntimeError('Embedding vector missing in lambda response')
+
+        query_vector = np.array(query_embedding, dtype=np.float32)
+        query_norm = np.linalg.norm(query_vector)
+        if query_norm == 0:
+            raise ValueError('Query embedding norm is zero; cannot compute similarity')
         
         # List all embedding files in S3
         embeddings_response = s3_client.list_objects_v2(
@@ -46,7 +64,7 @@ def lambda_handler(event, context):
         
         similarities = []
         
-        # Calculate similarities (MVP approach - not scalable)
+        # Calculate cosine similarity against stored sentence embeddings
         for obj in embeddings_response.get('Contents', [])[:100]:  # Limit for demo
             try:
                 embedding_key = obj['Key']
@@ -56,6 +74,15 @@ def lambda_handler(event, context):
                 embedding_obj = s3_client.get_object(Bucket=KG_BUCKET, Key=embedding_key)
                 embedding_bytes = embedding_obj['Body'].read()
                 embedding_vector = np.frombuffer(embedding_bytes, dtype=np.float32)
+
+                if embedding_vector.size != query_vector.size:
+                    # Skip vectors with mismatched dimensionality
+                    continue
+
+                denom = np.linalg.norm(embedding_vector) * query_norm
+                if denom == 0:
+                    continue
+                similarity_score = float(np.dot(query_vector, embedding_vector) / denom)
                 
                 # Check if sentence belongs to requested documents
                 if doc_ids:
@@ -72,11 +99,9 @@ def lambda_handler(event, context):
                         if not any(doc_id in sentence_docs for doc_id in doc_ids):
                             continue
                 
-                # Calculate similarity (placeholder - would use actual query vector)
-                # For now, return random selection
                 similarities.append({
                     'hash': sentence_hash,
-                    'similarity': np.random.random()  # Placeholder
+                    'similarity': similarity_score
                 })
                 
             except Exception as e:
