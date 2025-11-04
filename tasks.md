@@ -1,231 +1,190 @@
-This is a high-stakes, 5-hour sprint. The plan you have is excellent but needs more granular, step-by-step instructions for the agents (or yourselves) to execute flawlessly.
+## Updated GSSR Flow:
+```
+Phase 1: Generation (3x JSONs at temp=0.6)
+         ↓
+Phase 2: Fidelity Check (programmatic)
+         ↓
+Phase 2a: Consensus Check (all 3 identical?)
+         ↓ (if not identical)
+Phase 3: Scorer (temp=0.0) → gives 3 scores
+         ↓
+    All scores < 70? → Retry from Phase 1 (max 5 attempts)
+    At least one ≥ 70? → Go to Phase 4
+         ↓
+Phase 4: Second Scorer (temp=0.3) → verification
+         ↓
+    All scores < 70? → Retry from Phase 1 or fallback
+         ↓
+Phase 5: Select best JSON (average of pass1 + pass2 scores)
+```
 
-Here is the hyper-detailed, click-by-click execution plan. It incorporates the **critical fixes** (SFN concurrency, deduplication) and provides the exact logic for each Lambda.
+# Updated Task List: KG Pipeline and UI Enhancements (Final for Submission)
 
-**Your Goal:** A working demo of `GET /docs`, `GET /docs/{job_id}/status`, and `POST /query`.
+---
 
-## 🎉 IMPLEMENTATION STATUS SUMMARY
+* `[x]` **Prompt Engineering (First Iteration - COMPLETE):**
 
-**✅ COMPLETED TASKS:**
-- **P0: CRITICAL FIXES** - All CDK concurrency, deduplication, and embedding fixes implemented and deployed
-- **P1: CORE APIs** - All 3 target APIs (`GET /docs`, `GET /docs/{job_id}/status`, `POST /query`) are implemented and working
-- **P2: INGESTION FLOW** - Complete document processing pipeline from upload to Step Functions
-- **P3: RAG & KG AGENTS** - All 6 KG extraction agents (l9-l14) and RAG components implemented
+    * `[x]` **Entity Extraction Prompt (D1):**
+        * `[x]` Complete worked example showing reasoning + JSON output
+        * `[x]` Emphasis on using `<reasoning>` block for step-by-step thinking
+        * `[x]` Entity boundary rules (titles with names, appositives as separate, compounds as single)
+        * `[x]` File: `D1_entity_extraction.txt`
 
-**⚠️ PARTIALLY COMPLETED:**
-- **P4: OBSERVABILITY** - API endpoints exist but l19/l20 are stub implementations
-- **Graph Operations** - l15/l16 are stub implementations (not critical for demo)
+    * `[x]` **Kriya Concept Prompt (D2a):**
+        * `[x]` Voice Detection Checklist with concrete indicators
+        * `[x]` Tricky case examples for passive voice
+        * `[x]` Emphasis on thorough reasoning before classification
+        * `[x]` File: `D2a_kriya_extraction.txt`
 
-**🚀 DEMO READY:** The core functionality is complete and deployed. All target APIs are working.
+    * `[x]` **Event Instance + Kāraka Prompt (D2b):**
+        * `[x]` Locus Decision Tree for classification (3-step process)
+        * `[x]` Concrete examples applying the decision tree
+        * `[x]` Explicit handling for passive without agent
+        * `[x]` Reinforcement that entity references must match INPUT ENTITIES exactly
+        * `[x]` File: `D2b_event_karaka_extraction.txt`
 
------
+    * `[x]` **Scorer Prompt (Critical for GSSR):**
+        * `[x]` Structured scoring rubric (100-point scale):
+            * Completeness (40 points): All entities? All verbs? All kāraka roles?
+            * Accuracy (40 points): Entity types? Voice? Kāraka semantics? Locus types?
+            * Fidelity (20 points): Exact text match? No invented spans?
+        * `[x]` Output format: JSON array with score + detailed reasoning for each of 3 input JSONs
+        * `[x]` Strengths/weaknesses breakdown
+        * `[x]` Designed for temperature = 0.0 (deterministic scoring)
+        * `[x]` File: `scorer.txt`
 
-## 🎯 BACKEND (SERVERLESS) TASK LIST (5-Hour Plan)
+    * `[x]` **Correction Prompt:**
+        * `[x]` Template for providing specific error feedback to LLM
+        * `[x]` Used when fidelity check fails or Locus errors detected
+        * `[x]` File: `correction_prompt.txt`
 
-### P0: CRITICAL FIXES (Est: 60 Mins) - **✅ COMPLETED**
+---
 
-This entire plan fails if you skip this. Your SFN will fail 66% of the time.
+* `[ ]` **KG Pipeline Architecture: GSSR Implementation:**
 
-1.  **Fix CDK Concurrency (10 mins)**
+    * `[ ]` **Define Sentence Table & Caching Strategy:**
+        * `[ ]` Define a central "Sentence Table" with the following columns:
+            * `sentence_hash` (Primary Key)
+            * `original_sentence` (To store the raw sentence text)
+            * `document_ids` (A list/array to track all source documents containing the sentence)
+            * `status` (Enum: e.g., `KG_PENDING`, `KG_IN_PROGRESS`, `KG_COMPLETE`, `KG_FAILED`, `NEEDS_REVIEW`)
+            * `best_score` (To be updated with the final winning score *after* the GSSR process)
+            * `failure_reason` (To track why GSSR failed if max attempts reached)
+            * `needs_review` (Boolean flag for human review queue)
+            * `attempts_count` (Track how many GSSR iterations were needed)
+        * `[ ]` When a new document is ingested, sentences are hashed and added to this table with the `KG_PENDING` status.
+        * `[ ]` The KG processing queue/worker should query this table and select only sentences with the `status = KG_PENDING` for processing.
+        * `[ ]` Before processing, a check should confirm the sentence isn't already `KG_COMPLETE` (as a redundant check for the queue logic).
 
-      * [x] Open `serverless_stack.py`.
-      * [x] Find the `sfn.Map` state (`ProcessAllSentencesMap`).
-      * [x] Change **`max_concurrency=3`** to **`max_concurrency=1`**.
-      * [x] Add a comment: `# MUST BE 1. This map processes 1 sentence, which spawns ~6 parallel agents. max_concurrency > 1 will overload l7_llm_call (limit 3).`
+    * `[ ]` **Implement Comprehensive Logging Strategy:**
+        * `[ ]` Create a central `LLMCallLog` table to store all raw LLM requests and responses *as-is* (no cleanup) for complete debugging traceability.
+        * `[ ]` Each log entry must include a unique request ID and contextual metadata (e.g., `pipeline_stage`, `document_id`, `sentence_hash`, `attempt_number`, `generation_index`).
+        * `[ ]` Store the *extracted* JSON and `reasoning` sections in a separate processing table, linked to the `sentence_hash` and `LLMCallLog` ID.
 
-2.  **Fix CDK Dedup Bug (30 mins)**
+    * `[ ]` **Develop Multi-Phase "Generate, Score, Select, Repeat" (GSSR) Pipeline:**
+        * GSSR applies to three extraction phases: **(1) Entity Extraction (D1), (2) Kriya Extraction (D2a), (3) Event Instance + Kāraka Extraction (D2b)**
+        * **Maximum 5 attempts** per sentence to prevent infinite loops
+        * **Temperature strategy:** Generation = 0.6, Scoring Pass 1 = 0.0, Scoring Pass 2 = 0.3
 
-      * [x] Open `serverless_stack.py`.
-      * [x] **Add the missing `l5_check_dedup` Lambda:** Copy the CDK code for `l4_list_all_docs`, paste it, and change the ID and code path:
-        ```python
-        l5_check_dedup = _lambda.Function(
-            self,
-            "CheckDedupTask", # Renamed for clarity
-            runtime=_lambda.Runtime.PYTHON_3_12,
-            handler="lambda_function.lambda_handler",
-            code=_lambda.Code.from_asset(
-                os.path.join("src", "lambda_src", "job_mgmt", "l5_check_dedup") # Path from your tree
-            ),
-            timeout=Duration.minutes(1),
-            memory_size=512,
-            environment={
-                "SENTENCES_TABLE": sentences_table.table_name
-            },
-        )
-        ```
-      * [x] **Add to `all_functions` list:** Add `l5_check_dedup` to the `all_functions` list so it gets DDB permissions.
-      * [x] **Fix SFN:** Find `check_dedup_task = tasks.LambdaInvoke(...)`.
-      * [x] Change `lambda_function=get_sentences_from_s3` to `lambda_function=l5_check_dedup`.
+    * `[ ]` **Phase 1: Generation (3x Independent Calls)**
+        * `[ ]` For each extraction stage (D1, D2a, D2b), make **3 independent LLM calls** to generate 3 distinct JSON variations.
+        * `[ ]` Use **temperature = 0.6** for focused but slightly diverse generations.
+        * `[ ]` Require the LLM to provide its `reasoning` in `<reasoning>` tags for each generated JSON structure.
+        * `[ ]` Log all 3 raw responses to `LLMCallLog` table with metadata.
 
-3.  **Fix CDK Embedding Bug (10 mins)**
+    * `[ ]` **Phase 2: Unidirectional Fidelity Check**
+        * `[ ]` Programmatically verify that all extracted text spans in the JSON exist verbatim in the `original_sentence`.
+        * `[ ]` **Direction: JSON ⊂ Sentence** (not bidirectional - the sentence can have extra words).
+        * `[ ]` Check: Every value in JSON (entity text, surface_text, entity in kāraka_links) must be a substring of `original_sentence`.
+        * `[ ]` Allow for case-insensitive matching with a warning if case differs.
+        * `[ ]` **Fidelity Failure Loop:**
+            * `[ ]` If a check fails for any of the 3 JSONs, identify the *exact* span that failed.
+            * `[ ]` Re-call the LLM with a correction prompt (use `correction_prompt.txt`) providing specific error feedback.
+            * `[ ]` Attempt correction once per failed JSON.
+            * `[ ]` If correction still fails, use the best available JSON and continue to scoring.
 
-      * [x] Open `serverless_stack.py`.
-      * [x] Find `parallel_entities_kriya = sfn.Parallel(...)`.
-      * [x] Add a new branch to it:
-        ```python
-        .branch(
-            tasks.LambdaInvoke(self, "EmbeddingTask",
-                lambda_function=embedding_call,
-                payload_response_only=True
-            )
-        )
-        ```
+    * `[ ]` **Phase 2a: Consensus Check (Optimization)**
+        * `[ ]` After all 3 JSONs pass the fidelity check, perform a semantic comparison.
+        * `[ ]` **If all 3 JSONs are identical** (serialize with `json.dumps(sort_keys=True)` and compare):
+            * `[ ]` **Skip** the entire scoring process (Phase 3 and Phase 4).
+            * `[ ]` Select this single consensus JSON with score = 100.
+            * `[ ]` Proceed directly to Phase 5.
+        * `[ ]` **If JSONs are different:**
+            * `[ ]` Proceed to Phase 3 for scoring.
 
-4.  **Deploy (10 mins)**
+    * `[ ]` **Phase 3: LLM Scoring (Pass 1 - Primary Evaluation)**
+        * `[ ]` *(Triggered if consensus check in Phase 2a fails).*
+        * `[ ]` Send all 3 verified JSON objects to the Scorer LLM in a **single call** (use `scorer.txt` prompt).
+        * `[ ]` Use **temperature = 0.0** for maximum scoring consistency.
+        * `[ ]` Parse the Scorer's response to extract:
+            * Score (1-100) for *each* of the 3 JSONs
+            * Detailed reasoning breakdown (completeness, accuracy, fidelity)
+            * Strengths and weaknesses for each JSON
+        * `[ ]` **Scoring Failure Handling:**
+            * `[ ]` If *all 3* variations score below 70:
+                * Check if `attempts_count < 5`
+                * If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again (optionally include scorer feedback in generation prompt)
+                * If no (attempts_count == 5): Go to fallback selection
 
-      * [x] Run `cdk deploy ServerlessStack`.
+    * `[ ]` **Phase 4: LLM Scoring (Pass 2 - Verification)**
+        * `[ ]` *(Triggered if at least one JSON scored ≥ 70 in Pass 1).*
+        * `[ ]` Initiate a **second, independent** scoring call to the Scorer LLM (same `scorer.txt` prompt).
+        * `[ ]` Use **temperature = 0.3** for slight variance to detect scorer bias.
+        * `[ ]` Parse scores for all 3 JSONs.
+        * `[ ]` If this second pass also fails to produce a score ≥ 70 for any variation:
+            * Check if `attempts_count < 5`
+            * If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again
+            * If no (attempts_count == 5): Go to fallback selection
 
------
+    * `[ ]` **Phase 5: Final Selection and Graph Construction**
+        * `[ ]` Combine scores from Pass 1 and Pass 2: `combined_score = (score_pass1 + score_pass2) / 2`
+        * `[ ]` Select the JSON with the highest combined score.
+        * `[ ]` **Update Sentence Table:**
+            * Set `best_score` = selected JSON's combined score
+            * Set `status = KG_COMPLETE`
+            * Set `attempts_count` = current attempt number
+            * Set `needs_review = FALSE`
+        * `[ ]` Use the final selected JSON to create entities, events, and kāraka links in NetworkX:
+            * Create entity nodes with properties: `{text, type, sentence_hash}`
+            * Create event instance nodes with properties: `{instance_id, kriyā_concept, surface_text, prayoga, sentence_hash}`
+            * Create kāraka edges between event instances and entities with properties: `{role, reasoning, sentence_hash}`
+        * `[ ]` Create an embedding for the `original_sentence` using `llama-3.2-nv-embedqa-1b-v2` and store it in the vector database with `sentence_hash` as the key.
 
-### P1: IMPLEMENT CORE APIs (Est: 120 Mins) - **✅ COMPLETED**
+    * `[ ]` **Fallback Selection (When Max Attempts Reached):**
+        * `[ ]` If after 5 attempts no JSON scores ≥ 70:
+            * Select the JSON with the highest score from the last attempt
+            * **Update Sentence Table:**
+                * Set `status = KG_COMPLETE`
+                * Set `needs_review = TRUE`
+                * Set `failure_reason` = "MAX_ATTEMPTS_REACHED" or "LOW_QUALITY_SCORES"
+                * Set `best_score` = the fallback score
+                * Set `attempts_count = 5`
+            * Log warning for manual review queue
+            * Still create graph nodes/edges using the best available JSON
 
-**1. `l7_llm_call` (The Gateway) (60 mins)**
+    * `[ ]` **Data Storage Requirement:**
+        * `[ ]` Ensure that full sentences are *not* stored directly within the NetworkX graph nodes.
+        * `[ ]` Instead, store `sentence_hash` in NetworkX node/edge properties that link back to the `Sentence Table` and the vector database.
+        * `[ ]` Graph queries can join with Sentence Table using `sentence_hash` to retrieve original text when needed.
 
-  * [x] Open `src/lambda_src/llm_gateway/l7_llm_call/lambda_function.py`.
-  * [x] **Imports:** `import requests, boto3, os, json, datetime, uuid, time`.
-  * [x] **Get Env Vars:** `LOG_TABLE = os.environ['LLM_CALL_LOG_TABLE']`, `KG_BUCKET = os.environ['KG_BUCKET']`, `GENERATE_ENDPOINT = "http://..."`.
-  * [x] **Handler Logic:**
-    1.  Parse `event`: `job_id`, `sentence_hash`, `prompt_name`, `stage`, `inputs_dict`.
-    2.  `call_id = str(uuid.uuid4())`, `start_time = time.time()`.
-    3.  **Load Prompt:** `s3.get_object(Bucket=KG_BUCKET, Key=f'prompts/{prompt_name}.txt')`... `prompt_template = ...read().decode('utf-8')`.
-    4.  **Format Prompt:** `formatted_prompt = prompt_template.format(**inputs_dict)`.
-    5.  **Log Request:** `dynamodb.put_item(TableName=LOG_TABLE, Item={... 'call_id': call_id, 'job_id': job_id, 'sentence_hash': sentence_hash, 'stage': stage, 'prompt_template': prompt_name, 'timestamp': int(start_time * 1000), 'status': 'pending'})`.
-    6.  **Make HTTP Call:** `response = requests.post(GENERATE_ENDPOINT, json={'inputs': formatted_prompt, 'parameters': {...}})`. (Check your model's *exact* JSON schema).
-    7.  `latency_ms = int((time.time() - start_time) * 1000)`.
-    8.  **Log Response:** `dynamodb.update_item(...)` for `call_id` to set `status='success'`, `response_json=response.json()`, `latency_ms=latency_ms`.
-    9.  **Return:** `return response.json()`.
+---
 
-**2. `l4_list_all_docs` (`GET /docs`) (30 mins)**
+* `[ ]` **UI:**
+    * `[ ]` Update the UI design based on the reference from `stitch.withgoogle`.
 
-  * [x] Open `.../job_mgmt/l4_list_all_docs/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `response = dynamodb.scan(TableName=os.environ['JOBS_TABLE'], Limit=20, Select='SPECIFIC_ATTRIBUTES', AttributesToGet=['job_id', 'filename', 'status', 'preview_text', 'created_at'])`.
-    2.  Format as `{"data": response['Items'], "pagination": {}}`.
-    3.  Return 200 OK.
+---
 
-**3. `l3_update_doc_status_api` (`GET /docs/{job_id}/status`) (30 mins)**
+* `[ ]` **Code Maintenance & Documentation:**
+    * `[ ]` Clean the project codebase: Refactor and remove all unnecessary files, and delete any deprecated or unused scripts.
+    * `[ ]` Document known limitations for first iteration:
+        * No coreference resolution (pronouns not linked to referents across sentences)
+        * Single-sentence processing (no cross-sentence context)
+        * No external NLP tools (pure LLM-based pipeline using prompt engineering only)
+        * Relations (Sambandha) and Attributes (Modifiers) deferred to future iterations
+        * Character range extraction skipped (ambiguous for duplicate entities in same sentence)
+    * `[ ]` Document the GSSR pipeline flow with diagrams
+    * `[ ]` Add code comments explaining temperature choices and retry logic
+    * `[ ]` Create a human review queue interface/script for sentences marked with `needs_review = TRUE`
 
-  * [x] Open `.../job_mgmt/l3_update_doc_status/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `job_id = event['pathParameters']['job_id']`.
-    2.  `doc_response = dynamodb.get_item(TableName=os.environ['JOBS_TABLE'], Key={'job_id': {'S': job_id}})` (Get `filename`, `status`, `total_sentences`).
-    3.  `llm_count_res = dynamodb.query(TableName=os.environ['LLM_LOG_TABLE'], IndexName='ByJobId', KeyConditionExpression='job_id = :jid', ExpressionAttributeValues={':jid': {'S': job_id}}, Select='COUNT')`.
-    4.  `sentence_count_res = dynamodb.query(TableName=os.environ['SENTENCES_TABLE'], IndexName='ByJobId', KeyConditionExpression='job_id = :jid', FilterExpression='kg_status = :done', ExpressionAttributeValues={...}, Select='COUNT')`.
-    5.  Combine all 4 pieces into the final JSON and return 200 OK.
+--- 
 
------
-
-### P2: IMPLEMENT INGESTION FLOW (Est: 60 Mins) - **✅ COMPLETED**
-
-**1. `l2_validate_doc` (15 mins)**
-
-  * [x] Open `.../job_mgmt/l2_validate_doc/lambda_function.py`.
-  * [x] **Logic:**
-    1.  Parse S3 event: `bucket = event['Records'][0]['s3']['bucket']['name']`, `key = event['Records'][0]['s3']['object']['key']`.
-    2.  `job_id = key.split('.')[0]` (Assuming `job_id.txt`).
-    3.  `dynamodb.update_item(TableName=os.environ['JOBS_TABLE'], Key={'job_id': {'S': job_id}}, UpdateExpression='SET #s = :stat', ExpressionAttributeNames={'#s': 'status'}, ExpressionAttributeValues={':stat': {'S': 'validating'}})`
-    4.  Invoke `l3`: `lambda.invoke(FunctionName=os.environ['SANITIZE_LAMBDA_NAME'], InvocationType='Event', Payload=json.dumps({'job_id': job_id, 's3_key': key, 's3_bucket': bucket}))`.
-
-**2. `l3_sanitize_doc` (20 mins)**
-
-  * [x] Open `.../job_mgmt/l3_sanitize_doc/lambda_function.py`.
-  * [x] **Logic:**
-    1.  Get `job_id`, `s3_key`, `s3_bucket` from `event`.
-    2.  Read file: `s3.get_object(Bucket=s3_bucket, Key=s3_key)`.
-    3.  Split: `sentences = re.split(r'(?<=[.!?])\s+', text)`.
-    4.  Create list: `sentence_list = [{'text': s, 'hash': hashlib.sha256(s.encode()).hexdigest(), 'job_id': job_id} for s in sentences]`.
-    5.  Save JSON: `s3.put_object(Bucket=os.environ['VERIFIED_BUCKET'], Key=f'{job_id}/sentences.json', Body=json.dumps(sentence_list))`.
-    6.  Update `DocumentJobs`: `update_item` to set `status: 'processing_kg'`, `total_sentences: len(sentence_list)`.
-    7.  Start SFN: `sfn.start_execution(stateMachineArn=os.environ['STATE_MACHINE_ARN'], input=json.dumps({'job_id': job_id, 's3_path': f'{job_id}/sentences.json'}))`.
-
-**3. `l8_get_sentences_from_s3` (10 mins)**
-
-  * [x] Open `.../job_mgmt/l8_get_sentences_from_s3/lambda_function.py`.
-  * [x] **Logic:**
-    1.  Get `s3_path` from `event`.
-    2.  Read file: `s3.get_object(Bucket=os.environ['VERIFIED_BUCKET'], Key=s3_path)`.
-    3.  `data = json.loads(body)`.
-    4.  Return `{'sentences': data}`.
-
-**4. `l5_check_dedup` (The Fix Logic) (15 mins)**
-
-  * [x] Open `.../job_mgmt/l5_check_dedup/lambda_function.py`.
-  * [x] **Logic:**
-    1.  Input is SFN Map item: `event = {'text': ..., 'hash': 'abc...', 'job_id': 'xyz...'}`.
-    2.  `hash = event['hash']`, `job_id = event['job_id']`.
-    3.  `response = dynamodb.get_item(TableName=os.environ['SENTENCES_TABLE'], Key={'sentence_hash': {'S': hash}})`
-    4.  If `'Item'` in response:
-          * If `response['Item']['kg_status']['S'] == 'kg_done'`:
-              * *(Optional - skip for time)* Update `documents` list.
-              * Return `{'kg_status': 'kg_done'}`.
-    5.  *Else (Item not found or not done):*
-          * `dynamodb.put_item(TableName=..., Item={... 'sentence_hash': hash, 'kg_status': 'pending', 'documents': [{'S': job_id}]})`
-          * Return `{'kg_status': 'pending'}`.
-
------
-
-### P3: IMPLEMENT RAG & KG AGENTS (Est: 60 Mins) - **✅ COMPLETED**
-
-**1. `l8_embedding_call` (10 mins)**
-
-  * [x] Open `.../llm_gateway/l8_embedding_call/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `EMBED_ENDPOINT = "http://..."`.
-    2.  Input is `event`: `{'text': ..., 'hash': ..., 'job_id': ...}`.
-    3.  `response = requests.post(EMBED_ENDPOINT, json={'text': event['text']})`.
-    4.  Save vector to S3: `s3.put_object(Bucket=os.environ['KG_BUCKET'], Key=f'embeddings/{event["hash"]}.npy', Body=...)`.
-    5.  Return `{'status': 'success'}`.
-
-**2. `l9_extract_entities` (The Template) (15 mins)**
-
-  * [x] Open `.../kg_agents/l9_extract_entities/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `LLM_LAMBDA = os.environ['LLM_CALL_LAMBDA_NAME']`.
-    2.  `event` is the SFN Map item. `text = event['text']`, `hash = event['hash']`, `job_id = event['job_id']`.
-    3.  `payload = {'job_id': job_id, 'sentence_hash': hash, 'stage': 'D1_Entities', 'prompt_name': 'entity_prompt.txt', 'inputs': {'SENTENCE_HERE': text}}`.
-    4.  `response = lambda.invoke(FunctionName=LLM_LAMBDA, Payload=json.dumps(payload))`.
-    5.  `llm_output = json.loads(response['Payload'].read())`.
-    6.  Save: `s3.put_object(Bucket=os.environ['KG_BUCKET'], Key=f'temp_kg/{hash}/entities.json', Body=json.dumps(llm_output))`.
-    7.  Return `{'status': 'success'}`.
-
-**3. `l10-l14` (KG Agents) (15 mins)**
-
-  * [x] **Copy-paste** the `l9` logic into `l10`, `l11`, `l12`, `l13`, `l14`.
-  * [x] **Change only** the `stage`, `prompt_name`, and `output_path` for each.
-      * `l10_extract_kriya`: `stage: 'D2a_Kriya'`, `prompt_name: 'kriya_concept_prompt.txt'`, `output_path: '.../kriya.json'`.
-      * ...and so on for all 6 agents.
-
-**4. `l17_retrieve_from_embedding` (10 mins)**
-
-  * [x] Open `.../rag/l17_retrieve_from_embedding/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `query = event['query']`, `doc_ids = event['doc_ids']`.
-    2.  Invoke `l8_embedding_call` to get query vector.
-    3.  **MVP HACK:** Load all `.npy` vectors from `kg-bucket/embeddings/`. (FAISS is too slow to build).
-    4.  Calculate cosine similarity, find Top 30 hashes.
-    5.  **Filter:** Loop Top 30, `GetItem` from `SentencesTable`. Check if `item['documents']` list contains any `doc_ids`. Keep Top 3.
-    6.  Return `['hash1', 'hash2', 'hash3']`.
-
-**5. `l18_synthesize_answer` (`POST /query`) (10 mins)**
-
-  * [x] Open `.../rag/l18_synthesize_answer/lambda_function.py`.
-  * [x] **Logic:**
-    1.  `body = json.loads(event['body'])`, `query = body['query']`, `doc_ids = body['doc_ids']`.
-    2.  Invoke `l17`: `response = lambda.invoke(l17, ...)` -\> `['hash1', 'hash2']`.
-    3.  **Build Context:** Loop hashes. `GetItem` from `SentencesTable` (for text). `s3.get_object` from `temp_kg/{hash}/entities.json` + `.../events.json`. (Prune here\!)
-    4.  **Format Prompt:** Use `answer_synthesizer_prompt.txt` (from `prompts/`).
-    5.  **Invoke `l7_llm_call`** with the full context.
-    6.  Format the final 200 OK API response with `answer` and `references`.
-
------
-
-### P4: OBSERVABILITY (Est: 30 Mins) - **⚠️ PARTIALLY COMPLETED**
-
-  * [ ] **`l19_get_processing_chain` (`GET /docs/{job_id}/chain`)** - **STUB ONLY**
-      * `job_id = event['pathParameters']['doc_id']`.
-      * `Query` `LLMCallLog` GSI `ByJobId`, sort by `timestamp`.
-      * Return 200 OK with `{"data": response['Items']}`.
-  * [ ] **`l20_get_sentence_chain` (`GET /sentences/{hash}/chain`)** - **STUB ONLY**
-      * `hash = event['pathParameters']['sentence_hash']`.
-      * `Query` `LLMCallLog` GSI `BySentenceHash`, sort by `timestamp`.
-      * Return 200 OK with `{"data": response['Items']}`.
