@@ -7,9 +7,7 @@ import os
 import boto3
 import sys
 
-# Add shared utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
-
+# Import shared utilities from same directory
 from json_schemas import D2B_SCHEMA, validate_schema
 from fidelity_validator import validate_d2b_fidelity
 from gssr_utils import check_consensus, parse_llm_json_response
@@ -213,12 +211,12 @@ def lambda_handler(event, context):
         # Get previous scorer feedback
         scorer_feedback = get_scorer_feedback(sentence_hash) if current_attempts > 0 else None
         
-        # Phase 1: Generate 3 JSONs (temp=0.6, sequential)
+        # Phase 1: Generate 3 JSONs (temp=0.4, sequential)
         print(f"Phase 1: Generating 3 JSONs for {sentence_hash}")
         raw_jsons = []
         for i in range(3):
             llm_response = call_llm(text, entities_json, kriyas_json, sentence_hash, 
-                                   job_id, 0.6, current_attempts + 1, i + 1, scorer_feedback)
+                                   job_id, 0.4, current_attempts + 1, i + 1, scorer_feedback)
             
             # Extract content from LLM response
             content = ""

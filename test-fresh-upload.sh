@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-export $(grep -v '^#' .env | xargs)
 source .venv/bin/activate
+export $(grep -v '^#' .env | xargs)
 
-API_URL="https://7g3bdwsnsc.execute-api.us-east-1.amazonaws.com/prod"
+API_URL="${APP_API_GATEWAY_URL}"
 
 echo "=== Fresh Upload Test ==="
 echo ""

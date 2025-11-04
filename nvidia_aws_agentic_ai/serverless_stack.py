@@ -759,7 +759,13 @@ class ServerlessStack(Stack):
             "EntitiesTask",
             lambda_function=extract_entities,
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,
+        )
+        
+        # Check if D1 needs retry
+        check_d1_retry = sfn.Choice(self, "CheckD1Retry")
+        check_d1_retry.when(
+            sfn.Condition.string_equals("$.status", "retry"),
+            entities_task  # Loop back to entities
         )
         
         # Kriya second
@@ -767,7 +773,13 @@ class ServerlessStack(Stack):
             self, "KriyaTask", 
             lambda_function=extract_kriya, 
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,
+        )
+        
+        # Check if D2a needs retry
+        check_d2a_retry = sfn.Choice(self, "CheckD2aRetry")
+        check_d2a_retry.when(
+            sfn.Condition.string_equals("$.status", "retry"),
+            kriya_task  # Loop back to kriya
         )
         
         # Embedding third
@@ -784,7 +796,13 @@ class ServerlessStack(Stack):
             "BuildEventsTask",
             lambda_function=build_events,
             payload_response_only=True,
-            result_path=sfn.JsonPath.DISCARD,
+        )
+        
+        # Check if D2b needs retry
+        check_d2b_retry = sfn.Choice(self, "CheckD2bRetry")
+        check_d2b_retry.when(
+            sfn.Condition.string_equals("$.status", "retry"),
+            build_events_task  # Loop back to build events
         )
 
         # Extract relations from events
@@ -812,16 +830,22 @@ class ServerlessStack(Stack):
             result_path=sfn.JsonPath.DISCARD,
         )
 
-        # Chain: Sequential processing (GSSR needs sequential for D2b dependency on D1/D2a)
-        sentence_processing_flow = (
-            entities_task
-            .next(kriya_task)
-            .next(embedding_task)
-            .next(build_events_task)
-            .next(relations_task)
-            .next(graph_node_task)
-            .next(graph_edge_task)
-        )
+        # Chain: Sequential processing with retry logic
+        # D1 -> Check retry -> D2a -> Check retry -> Embedding -> D2b -> Check retry -> Relations -> Graph
+        entities_task.next(check_d1_retry)
+        check_d1_retry.otherwise(kriya_task)
+        
+        kriya_task.next(check_d2a_retry)
+        check_d2a_retry.otherwise(embedding_task)
+        
+        embedding_task.next(build_events_task)
+        build_events_task.next(check_d2b_retry)
+        check_d2b_retry.otherwise(relations_task)
+        
+        relations_task.next(graph_node_task)
+        graph_node_task.next(graph_edge_task)
+        
+        sentence_processing_flow = entities_task
 
         # SFN Step 3: Create the Map state to run the sub-workflow
         process_all_sentences_map = sfn.Map(

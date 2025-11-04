@@ -7,9 +7,7 @@ import os
 import boto3
 import sys
 
-# Add shared utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
-
+# Import shared utilities from same directory
 from json_schemas import D2A_SCHEMA, validate_schema
 from fidelity_validator import validate_d2a_fidelity
 from gssr_utils import check_consensus, parse_llm_json_response
@@ -62,7 +60,8 @@ def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_re
     STATUS_NEEDS_REVIEW = 'NEEDS_REVIEW'
     
     try:
-        status = STATUS_NEEDS_REVIEW if (needs_review and attempts >= MAX_ATTEMPTS) else (STATUS_KG_IN_PROGRESS if needs_review else STATUS_KG_COMPLETE)
+        # D2a should NOT set KG_COMPLETE - only mark as IN_PROGRESS so D2b can run
+        status = STATUS_NEEDS_REVIEW if (needs_review and attempts >= MAX_ATTEMPTS) else STATUS_KG_IN_PROGRESS
         
         update_expr = "SET d2a_attempts = :att, best_score = :score, needs_review = :review, #st = :status"
         expr_values = {
@@ -175,11 +174,11 @@ def lambda_handler(event, context):
         # Get previous scorer feedback
         scorer_feedback = get_scorer_feedback(sentence_hash) if current_attempts > 0 else None
         
-        # Phase 1: Generate 3 JSONs (temp=0.6, sequential)
+        # Phase 1: Generate 3 JSONs (temp=0.4, sequential)
         print(f"Phase 1: Generating 3 JSONs for {sentence_hash}")
         raw_jsons = []
         for i in range(3):
-            llm_response = call_llm(text, sentence_hash, job_id, 0.6, current_attempts + 1, i + 1, scorer_feedback)
+            llm_response = call_llm(text, sentence_hash, job_id, 0.4, current_attempts + 1, i + 1, scorer_feedback)
             
             # Extract content from LLM response
             content = ""

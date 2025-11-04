@@ -7,9 +7,7 @@ import os
 import boto3
 import sys
 
-# Add shared utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
-
+# Import shared utilities from same directory
 from gssr_utils import parse_scorer_response
 
 lambda_client = boto3.client('lambda')

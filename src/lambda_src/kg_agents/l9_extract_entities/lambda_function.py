@@ -7,12 +7,10 @@ import os
 import boto3
 import sys
 
-# Add shared utilities to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'shared'))
-
+# Import shared utilities from same directory
 from json_schemas import D1_SCHEMA, validate_schema
 from fidelity_validator import validate_d1_fidelity
-from gssr_utils import check_consensus, parse_llm_json_response
+from gssr_utils import check_consensus, parse_llm_json_response, extract_reasoning_block
 
 # Boto3 clients
 s3_client = boto3.client("s3")
@@ -70,12 +68,11 @@ def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_re
     
     try:
         # Determine status based on results
+        # D1 should NOT set KG_COMPLETE - only mark as IN_PROGRESS so D2a/D2b can run
         if needs_review and attempts >= MAX_ATTEMPTS:
             status = STATUS_NEEDS_REVIEW
-        elif needs_review:
-            status = STATUS_KG_IN_PROGRESS
         else:
-            status = STATUS_KG_COMPLETE
+            status = STATUS_KG_IN_PROGRESS
             
         update_expr = "SET d1_attempts = :att, best_score = :score, needs_review = :review, #st = :status"
         expr_values = {
@@ -196,11 +193,11 @@ def lambda_handler(event, context):
         if scorer_feedback:
             print(f"Using scorer feedback from previous attempt: {scorer_feedback[:100]}...")
         
-        # Phase 1: Generate 3 JSONs (temp=0.6, sequential)
+        # Phase 1: Generate 3 JSONs (temp=0.4, sequential)
         print(f"Phase 1: Generating 3 JSONs for {sentence_hash}")
         raw_jsons = []
         for i in range(3):
-            llm_response = call_llm(text, sentence_hash, job_id, 0.6, current_attempts + 1, i + 1, scorer_feedback)
+            llm_response = call_llm(text, sentence_hash, job_id, 0.4, current_attempts + 1, i + 1, scorer_feedback)
             
             # Extract content from LLM response
             content = ""
@@ -242,7 +239,7 @@ def lambda_handler(event, context):
                     'inputs': {
                         'SENTENCE_HERE': text,
                         'FAILED_JSON': json.dumps(json_data, indent=2),
-                        'ORIGINAL_REASONING': '',  # TODO: Extract from LLM response
+                        'ORIGINAL_REASONING': extract_reasoning_block(content) if 'content' in locals() else '',
                         'ERROR_DESCRIPTIONS': '\n'.join(fidelity_errors)
                     }
                 }
