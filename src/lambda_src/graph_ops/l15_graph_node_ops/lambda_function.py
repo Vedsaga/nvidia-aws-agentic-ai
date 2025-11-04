@@ -6,9 +6,11 @@ import networkx as nx
 
 # Boto3 clients
 s3_client = boto3.client("s3")
+dynamodb = boto3.client("dynamodb")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
+SENTENCES_TABLE = os.environ.get("SENTENCES_TABLE", "Sentences")
 
 def lambda_handler(event, context):
     """
@@ -17,7 +19,6 @@ def lambda_handler(event, context):
     """
     
     try:
-        text = event['text']
         sentence_hash = event['hash']
         job_id = event['job_id']
         
@@ -33,16 +34,46 @@ def lambda_handler(event, context):
         # Create directed graph
         G = nx.DiGraph()
         
-        # Parse entities from LLM response
-        entities = parse_entities(entities_data)
+        # Parse sentence metadata for document references
+        document_ids = []
+        try:
+            sentence_item = dynamodb.get_item(
+                TableName=SENTENCES_TABLE,
+                Key={'sentence_hash': {'S': sentence_hash}}
+            ).get('Item', {})
+            document_ids = sentence_item.get('document_ids', {}).get('SS', [])
+            if not document_ids:
+                legacy_docs = sentence_item.get('documents', {}).get('SS', [])
+                document_ids = legacy_docs or []
+        except Exception as meta_err:
+            print(f"Warning: unable to load sentence metadata: {meta_err}")
+
+        # Extract entities from stored JSON structure
+        entities = entities_data.get('entities', []) if isinstance(entities_data, dict) else []
         
         # Add entity nodes
         for entity in entities:
-            G.add_node(entity, 
-                      node_type='entity',
-                      sentence_hash=sentence_hash,
-                      sentence_text=text,
-                      job_id=job_id)
+            if isinstance(entity, dict):
+                node_id = entity.get('text')
+                entity_type = entity.get('type', '')
+                entity_subtype = entity.get('subtype', '')
+            else:
+                node_id = str(entity)
+                entity_type = ''
+                entity_subtype = ''
+
+            if not node_id:
+                continue
+
+            G.add_node(
+                node_id,
+                node_type='entity',
+                entity_type=entity_type,
+                entity_subtype=entity_subtype,
+                sentence_hash=sentence_hash,
+                job_id=job_id,
+                document_ids=list(document_ids)
+            )
         
         # Serialize graph
         graph_bytes = pickle.dumps(G)
@@ -65,36 +96,3 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
         return {'status': 'error', 'error': str(e)}
-
-def parse_entities(llm_response):
-    """Extract entity list from LLM response"""
-    entities = []
-    try:
-        if 'choices' in llm_response and len(llm_response['choices']) > 0:
-            content = llm_response['choices'][0]['message']['content']
-            # Try to parse JSON
-            data = parse_json_from_content(content)
-            if data:
-                if 'entities' in data:
-                    entities = [e['text'] if isinstance(e, dict) else e for e in data['entities']]
-                elif isinstance(data, list):
-                    entities = [e['text'] if isinstance(e, dict) else e for e in data]
-    except Exception as e:
-        print(f"Error parsing entities: {e}")
-    return entities
-
-def parse_json_from_content(content):
-    """Extract JSON from LLM response content"""
-    import re
-    try:
-        # Remove code blocks
-        content = re.sub(r'```(?:json)?', '', content)
-        # Find JSON object or array
-        start = content.find('[') if '[' in content else content.find('{')
-        end = content.rfind(']') if ']' in content else content.rfind('}')
-        if start != -1 and end != -1:
-            json_str = content[start:end+1]
-            return json.loads(json_str)
-    except Exception as e:
-        print(f"Error parsing JSON: {e}")
-    return None

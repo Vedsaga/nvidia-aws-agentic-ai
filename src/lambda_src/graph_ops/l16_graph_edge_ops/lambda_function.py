@@ -6,9 +6,13 @@ import networkx as nx
 
 # Boto3 clients
 s3_client = boto3.client("s3")
+dynamodb = boto3.client("dynamodb")
+lambda_client = boto3.client("lambda")
 
 # Environment variables
 KG_BUCKET = os.environ["KG_BUCKET"]
+SENTENCES_TABLE = os.environ.get('SENTENCES_TABLE', 'Sentences')
+EMBEDDING_LAMBDA = os.environ.get('EMBEDDING_LAMBDA_NAME', 'EmbeddingCall')
 
 def lambda_handler(event, context):
     """
@@ -36,57 +40,77 @@ def lambda_handler(event, context):
             Key=f'temp_kg/{sentence_hash}/events.json'
         )
         events_data = json.loads(events_obj['Body'].read())
+
+        # Fetch sentence metadata for references
+        document_ids = []
+        try:
+            sentence_item = dynamodb.get_item(
+                TableName=SENTENCES_TABLE,
+                Key={'sentence_hash': {'S': sentence_hash}}
+            ).get('Item', {})
+            document_ids = sentence_item.get('document_ids', {}).get('SS', [])
+            if not document_ids:
+                legacy_docs = sentence_item.get('documents', {}).get('SS', [])
+                document_ids = legacy_docs or []
+        except Exception as meta_err:
+            print(f"Warning: unable to load sentence metadata: {meta_err}")
         
-        # Add edges from Karaka relationships
-        for event in events_data:
-            verb = event.get('verb', '')
-            karakas = event.get('karakas', [])
-            
-            # Find Agent and Object for primary edge
-            agent = None
-            obj = None
-            
-            for karak in karakas:
-                role = karak.get('role', '')
-                entity = karak.get('entity', '')
-                
-                if role == 'Agent':
-                    agent = entity
-                elif role == 'Object':
-                    obj = entity
-            
-            # Create primary edge: Agent -> Object with verb
-            if agent and obj:
-                if not G.has_node(agent):
-                    G.add_node(agent, node_type='entity', sentence_hash=sentence_hash)
-                if not G.has_node(obj):
-                    G.add_node(obj, node_type='entity', sentence_hash=sentence_hash)
-                
-                G.add_edge(agent, obj,
-                          edge_type='karaka',
-                          relation=verb,
-                          karaka_role='Agent->Object',
-                          sentence=text,
-                          sentence_hash=sentence_hash)
-            
-            # Add additional Karaka edges
-            for karak in karakas:
-                role = karak.get('role', '')
-                entity = karak.get('entity', '')
-                
-                if role in ['Instrument', 'Recipient', 'Source', 'Location']:
-                    # Connect to Agent if exists, otherwise to Object
-                    source_node = agent if agent else obj
-                    if source_node and entity:
-                        if not G.has_node(entity):
-                            G.add_node(entity, node_type='entity', sentence_hash=sentence_hash)
-                        
-                        G.add_edge(source_node, entity,
-                                  edge_type='karaka',
-                                  relation=verb,
-                                  karaka_role=role,
-                                  sentence=text,
-                                  sentence_hash=sentence_hash)
+        instances = []
+        if isinstance(events_data, dict):
+            instances = events_data.get('event_instances', [])
+        elif isinstance(events_data, list):
+            instances = events_data
+
+        # Add event nodes and kāraka edges
+        for event_instance in instances:
+            if not isinstance(event_instance, dict):
+                continue
+
+            instance_id = event_instance.get('instance_id') or event_instance.get('id')
+            if not instance_id:
+                continue
+
+            event_node_id = f"event:{sentence_hash}:{instance_id}"
+            if not G.has_node(event_node_id):
+                G.add_node(
+                    event_node_id,
+                    node_type='event_instance',
+                    kriya_concept=event_instance.get('kriyā_concept', ''),
+                    surface_text=event_instance.get('surface_text', ''),
+                    prayoga=event_instance.get('prayoga', ''),
+                    sentence_hash=sentence_hash,
+                    job_id=job_id,
+                    document_ids=list(document_ids)
+                )
+
+            for link in event_instance.get('kāraka_links', []):
+                if not isinstance(link, dict):
+                    continue
+
+                role = link.get('role', '')
+                entity_text = link.get('entity', '')
+                if not entity_text:
+                    continue
+
+                if not G.has_node(entity_text):
+                    G.add_node(
+                        entity_text,
+                        node_type='entity',
+                        sentence_hash=sentence_hash,
+                        job_id=job_id,
+                        document_ids=list(document_ids)
+                    )
+
+                G.add_edge(
+                    event_node_id,
+                    entity_text,
+                    edge_type='karaka',
+                    karaka_role=role,
+                    reasoning=link.get('reasoning', ''),
+                    sentence_hash=sentence_hash,
+                    job_id=job_id,
+                    document_ids=list(document_ids)
+                )
         
         # Serialize complete graph
         graph_bytes = pickle.dumps(G)
@@ -100,11 +124,20 @@ def lambda_handler(event, context):
         )
         
         print(f"Created graph with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges")
+
+        # Kick off embedding persistence so sentence can be retrieved via vector search
+        try:
+            lambda_client.invoke(
+                FunctionName=EMBEDDING_LAMBDA,
+                InvocationType='Event',
+                Payload=json.dumps({'text': text, 'hash': sentence_hash, 'job_id': job_id})
+            )
+        except Exception as embed_err:
+            print(f"Warning: embedding invocation failed for {sentence_hash}: {embed_err}")
         
         # Update sentence status in DynamoDB
-        dynamodb = boto3.client("dynamodb")
         dynamodb.update_item(
-            TableName=os.environ.get('SENTENCES_TABLE', 'Sentences'),
+            TableName=SENTENCES_TABLE,
             Key={'sentence_hash': {'S': sentence_hash}},
             UpdateExpression='SET #status = :status, kg_status = :legacy_status',
             ExpressionAttributeNames={'#status': 'status'},
@@ -122,19 +155,3 @@ def lambda_handler(event, context):
         import traceback
         traceback.print_exc()
         return {'status': 'error', 'error': str(e)}
-
-def parse_json_from_content(content):
-    """Extract JSON from LLM response content"""
-    import re
-    try:
-        # Remove code blocks
-        content = re.sub(r'```(?:json)?', '', content)
-        # Find JSON object or array
-        start = content.find('[') if '[' in content else content.find('{')
-        end = content.rfind(']') if ']' in content else content.rfind('}')
-        if start != -1 and end != -1:
-            json_str = content[start:end+1]
-            return json.loads(json_str)
-    except Exception as e:
-        print(f"Error parsing JSON: {e}")
-    return None

@@ -10,7 +10,7 @@ import sys
 # Import shared utilities from same directory
 from json_schemas import D2A_SCHEMA, validate_schema
 from fidelity_validator import validate_d2a_fidelity
-from gssr_utils import check_consensus, parse_llm_json_response
+from gssr_utils import check_consensus, parse_llm_json_response, extract_reasoning_block
 
 # Boto3 clients
 s3_client = boto3.client("s3")
@@ -71,7 +71,13 @@ def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_re
         # D2a should NOT set KG_COMPLETE - only mark as IN_PROGRESS so D2b can run
         status = STATUS_NEEDS_REVIEW if (needs_review and attempts >= MAX_ATTEMPTS) else STATUS_KG_IN_PROGRESS
         
-        update_expr = "SET d2a_attempts = :att, best_score = :score, needs_review = :review, #st = :status"
+        set_clauses = [
+            "d2a_attempts = :att",
+            "best_score = :score",
+            "needs_review = :review",
+            "#st = :status",
+            "attempts_count = :att"
+        ]
         expr_values = {
             ':att': {'N': str(attempts)},
             ':score': {'N': str(best_score)},
@@ -79,11 +85,18 @@ def update_sentence_result(sentence_hash, job_id, best_score, attempts, needs_re
             ':status': {'S': status}
         }
         expr_names = {'#st': 'status'}
-        
+
+        remove_fields = []
         if failure_reason:
-            update_expr += ", failure_reason = :reason"
+            set_clauses.append("failure_reason = :reason")
             expr_values[':reason'] = {'S': failure_reason}
-        
+        else:
+            remove_fields.append('failure_reason')
+
+        update_expr = "SET " + ", ".join(set_clauses)
+        if remove_fields:
+            update_expr += " REMOVE " + ", ".join(remove_fields)
+
         dynamodb.update_item(
             TableName=SENTENCES_TABLE,
             Key={'sentence_hash': {'S': sentence_hash}},
@@ -182,11 +195,11 @@ def lambda_handler(event, context):
         # Get previous scorer feedback
         scorer_feedback = get_scorer_feedback(sentence_hash) if current_attempts > 0 else None
         
-        # Phase 1: Generate 3 JSONs (temp=0.4, sequential)
+        # Phase 1: Generate 3 JSONs (temp=0.6, sequential)
         print(f"Phase 1: Generating 3 JSONs for {sentence_hash}")
-        raw_jsons = []
+        generation_results = []
         for i in range(3):
-            llm_response = call_llm(text, sentence_hash, job_id, 0.4, current_attempts + 1, i + 1, scorer_feedback)
+            llm_response = call_llm(text, sentence_hash, job_id, 0.6, current_attempts + 1, i + 1, scorer_feedback)
             
             # Extract content from LLM response
             content = ""
@@ -196,20 +209,26 @@ def lambda_handler(event, context):
             # Parse JSON from response
             parsed = parse_llm_json_response(content)
             if parsed:
-                raw_jsons.append(parsed)
+                json_payload = parsed
             else:
                 print(f"Failed to parse JSON from generation {i+1}")
-                raw_jsons.append({'kriyās': []})
+                json_payload = {'kriyās': []}
+
+            generation_results.append({
+                'json': json_payload,
+                'content': content,
+                'reasoning': extract_reasoning_block(content)
+            })
         
         # Phase 2: Fidelity check each JSON with correction loop
         print(f"Phase 2: Fidelity check")
-        valid_jsons = []
-        for i, json_data in enumerate(raw_jsons):
+        for i, result in enumerate(generation_results):
+            json_data = result['json']
             # Schema validation
             is_valid_schema, schema_error = validate_schema(json_data, D2A_SCHEMA)
             if not is_valid_schema:
                 print(f"JSON {i+1} failed schema validation: {schema_error}")
-                valid_jsons.append({'kriyās': []})
+                result['json'] = {'kriyās': []}
                 continue
             
             # Fidelity validation
@@ -228,7 +247,7 @@ def lambda_handler(event, context):
                     'inputs': {
                         'SENTENCE_HERE': text,
                         'FAILED_JSON': json.dumps(json_data, indent=2),
-                        'ORIGINAL_REASONING': '',
+                        'ORIGINAL_REASONING': result.get('reasoning', ''),
                         'ERROR_DESCRIPTIONS': '\n'.join(fidelity_errors)
                     }
                 }
@@ -252,7 +271,9 @@ def lambda_handler(event, context):
                 except Exception as e:
                     print(f"Correction error for JSON {i+1}: {e}")
             
-            valid_jsons.append(json_data)
+            result['json'] = json_data
+
+        valid_jsons = [result['json'] for result in generation_results]
         
         # Phase 2a: Consensus check
         print(f"Phase 2a: Consensus check")
@@ -277,9 +298,14 @@ def lambda_handler(event, context):
             update_sentence_result(sentence_hash, job_id, max(scores_pass1), current_attempts + 1, 
                                  True, f"Low scores in Pass 1: {scores_pass1}")
             try:
-                dynamodb.put_item(TableName=SENTENCES_TABLE, Item={'sentence_hash': {'S': sentence_hash}, 'scorer_feedback': {'S': scorer_feedback}})
-            except:
-                pass
+                dynamodb.update_item(
+                    TableName=SENTENCES_TABLE,
+                    Key={'sentence_hash': {'S': sentence_hash}},
+                    UpdateExpression='SET scorer_feedback = :feedback',
+                    ExpressionAttributeValues={':feedback': {'S': scorer_feedback}}
+                )
+            except Exception as err:
+                print(f"Failed to persist scorer feedback: {err}")
             return {'status': 'retry', 'stage': STAGE, **event}
         
         # Phase 4: Scoring Pass 2 (temp=0.3)
@@ -296,9 +322,14 @@ def lambda_handler(event, context):
                 update_sentence_result(sentence_hash, job_id, max(scores_pass2), current_attempts + 1,
                                      True, f"Low scores in Pass 2: {scores_pass2}")
                 try:
-                    dynamodb.put_item(TableName=SENTENCES_TABLE, Item={'sentence_hash': {'S': sentence_hash}, 'scorer_feedback': {'S': scorer_feedback}})
-                except:
-                    pass
+                    dynamodb.update_item(
+                        TableName=SENTENCES_TABLE,
+                        Key={'sentence_hash': {'S': sentence_hash}},
+                        UpdateExpression='SET scorer_feedback = :feedback',
+                        ExpressionAttributeValues={':feedback': {'S': scorer_feedback}}
+                    )
+                except Exception as err:
+                    print(f"Failed to persist scorer feedback: {err}")
                 return {'status': 'retry', 'stage': STAGE, **event}
             else:
                 print("Max attempts reached, using best available")
@@ -313,7 +344,19 @@ def lambda_handler(event, context):
         print(f"Best score: {best_score} (JSON {best_idx + 1})")
         
         needs_review = best_score < 70
-        update_sentence_result(sentence_hash, job_id, best_score, current_attempts + 1, needs_review)
+        failure_reason = None
+        if needs_review and current_attempts + 1 >= MAX_ATTEMPTS:
+            failure_reason = 'LOW_QUALITY_SCORES'
+        update_sentence_result(sentence_hash, job_id, best_score, current_attempts + 1, needs_review, failure_reason)
+        if not needs_review:
+            try:
+                dynamodb.update_item(
+                    TableName=SENTENCES_TABLE,
+                    Key={'sentence_hash': {'S': sentence_hash}},
+                    UpdateExpression='REMOVE scorer_feedback'
+                )
+            except Exception as err:
+                print(f"Failed to clear scorer feedback: {err}")
         save_to_s3(sentence_hash, best_json)
         
         return clean_event_payload(event)
