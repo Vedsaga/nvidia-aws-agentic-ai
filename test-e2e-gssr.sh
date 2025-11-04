@@ -95,9 +95,11 @@ query_table_by_job() {
 echo "API URL: $API_URL"
 echo ""
 
-# Create test file with multiple sentences
+# Create test file with multiple sentences (unique content each run)
 TEST_FILE="test-e2e-gssr.txt"
-echo "Dr. Elena Kowalski served as chief neuroscientist at the Berlin Institute from 2018 to 2023. She collaborated with Maria Santos on a groundbreaking study examining neuroplasticity." > "$TEST_FILE"
+TIMESTAMP=$(date +%s)
+RANDOM_ID=$((RANDOM % 10000))
+echo "Dr. Elena Kowalski served as chief neuroscientist at the Berlin Institute from 2018 to 2023. She collaborated with Maria Santos on a groundbreaking study examining neuroplasticity. Test run: $TIMESTAMP-$RANDOM_ID." > "$TEST_FILE"
 
 echo "✓ Created test file: $TEST_FILE"
 cat "$TEST_FILE"
@@ -370,10 +372,30 @@ QUERY_RESPONSE=$(curl -s -X POST "${API_URL}query" \
 echo "$QUERY_RESPONSE" | jq '.'
 
 # Check if query succeeded
-if echo "$QUERY_RESPONSE" | jq -e '.error' >/dev/null 2>&1; then
-    echo "❌ Query failed!"
+HAS_ANSWER=$(echo "$QUERY_RESPONSE" | jq -r '.answer // empty')
+HAS_ERROR=$(echo "$QUERY_RESPONSE" | jq -r '.error // empty')
+HAS_MESSAGE=$(echo "$QUERY_RESPONSE" | jq -r '.message // empty')
+
+if [ -n "$HAS_ERROR" ]; then
+    echo "❌ Query failed with error field!"
     echo "$QUERY_RESPONSE" | jq '.'
     exit 1
+fi
+
+if [ -n "$HAS_MESSAGE" ] && [[ "$HAS_MESSAGE" == *"Internal server error"* ]]; then
+    echo "❌ Query failed with internal server error!"
+    echo "$QUERY_RESPONSE" | jq '.'
+    echo ""
+    echo "Checking Lambda logs for errors..."
+    if [ "$HAVE_AWS" = true ]; then
+        aws logs tail /aws/lambda/ServerlessStack-SynthesizeAnswer450E341F-0If5YNYsNVD4 --since 2m --format short "${AWS_COMMON_ARGS[@]}" 2>/dev/null || echo "Could not retrieve logs"
+    fi
+    exit 1
+fi
+
+if [ -z "$HAS_ANSWER" ]; then
+    echo "⚠️  Query response missing 'answer' field"
+    echo "$QUERY_RESPONSE" | jq '.'
 fi
 
 echo ""
