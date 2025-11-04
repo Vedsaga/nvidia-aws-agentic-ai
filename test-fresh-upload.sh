@@ -10,7 +10,7 @@ echo "=== Fresh Upload Test ==="
 echo ""
 
 # 1. Create test file
-echo "Rama is a very good boy." > test-fresh.txt
+echo "Rama eats mango." > test-fresh.txt
 echo "Created test file: test-fresh.txt"
 echo ""
 
@@ -50,12 +50,48 @@ for i in {1..60}; do
     echo "=== Processing Complete ==="
     echo "$STATUS_RESPONSE" | jq .
     
+    # Verify GSSR execution
+    echo ""
+    echo "=== GSSR Verification ==="
+    SENTENCE_HASH=$(echo -n "Rama eats mango. " | sha256sum | cut -d' ' -f1)
+    echo "Sentence hash: $SENTENCE_HASH"
+    
+    # Check Sentences table for GSSR data
+    echo ""
+    echo "1. Checking Sentences table..."
+    aws dynamodb get-item --table-name Sentences --key "{\"sentence_hash\":{\"S\":\"$SENTENCE_HASH\"}}" | jq '.Item | {
+      d1_attempts: .d1_attempts.N,
+      d2a_attempts: .d2a_attempts.N,
+      d2b_attempts: .d2b_attempts.N,
+      best_score: .best_score.N,
+      needs_review: .needs_review.BOOL,
+      status: .status.S
+    }'
+    
+    # Check LLM logs count
+    echo ""
+    echo "2. Checking LLM call logs..."
+    LLM_COUNT=$(aws dynamodb query --table-name LLMCallLog --index-name BySentenceHash \
+      --key-condition-expression 'sentence_hash = :sh' \
+      --expression-attribute-values "{\":sh\":{\"S\":\"$SENTENCE_HASH\"}}" \
+      --select COUNT | jq -r '.Count')
+    echo "Total LLM calls: $LLM_COUNT"
+    
+    # Show breakdown by stage
+    echo ""
+    echo "3. LLM calls by stage:"
+    aws dynamodb query --table-name LLMCallLog --index-name BySentenceHash \
+      --key-condition-expression 'sentence_hash = :sh' \
+      --expression-attribute-values "{\":sh\":{\"S\":\"$SENTENCE_HASH\"}}" \
+      --limit 50 | jq -r '.Items[] | [.pipeline_stage.S, .temperature.N, .generation_index.N // "N/A"] | @tsv' | \
+      awk '{stages[$1]++} END {for (s in stages) print s ": " stages[s]}'
+    
     # Now test query
     echo ""
-    echo "4. Testing query: How was RAM?"
+    echo "4. Testing query: Who eats mango?"
     QUERY_RESPONSE=$(curl -s -X POST "$API_URL/query/submit" \
       -H "Content-Type: application/json" \
-      -d '{"question": "How was RAM?"}')
+      -d '{"question": "Who eats mango?"}')
     
     echo "$QUERY_RESPONSE" | jq .
     QUERY_ID=$(echo "$QUERY_RESPONSE" | jq -r '.query_id')
