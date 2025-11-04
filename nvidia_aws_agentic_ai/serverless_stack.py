@@ -117,6 +117,30 @@ class ServerlessStack(Stack):
             ),
         )
 
+        llm_extracts_table = dynamodb.Table(
+            self,
+            "LLMCallExtractsTable",
+            table_name="LLMCallExtracts",
+            partition_key=dynamodb.Attribute(
+                name="call_id", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp", type=dynamodb.AttributeType.NUMBER
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        llm_extracts_table.add_global_secondary_index(
+            index_name="BySentenceHash",
+            partition_key=dynamodb.Attribute(
+                name="sentence_hash", type=dynamodb.AttributeType.STRING
+            ),
+            sort_key=dynamodb.Attribute(
+                name="timestamp", type=dynamodb.AttributeType.NUMBER
+            ),
+        )
+
         # ========================================
         # LAMBDA LAYERS
         # ========================================
@@ -262,6 +286,7 @@ class ServerlessStack(Stack):
             layers=[requests_layer],
             environment={
                 "LLM_CALL_LOG_TABLE": llm_log_table.table_name,
+                "LLM_CALL_PARSED_TABLE": llm_extracts_table.table_name,
                 "JOBS_TABLE": jobs_table.table_name,
                 "SENTENCES_TABLE": sentences_table.table_name,
                 "KG_BUCKET": kg_bucket.bucket_name,
@@ -620,6 +645,8 @@ class ServerlessStack(Stack):
                 sentences_table.table_arn + "/index/*",
                 llm_log_table.table_arn,
                 llm_log_table.table_arn + "/index/*",
+                llm_extracts_table.table_arn,
+                llm_extracts_table.table_arn + "/index/*",
             ],
         )
         bedrock_policy = iam.PolicyStatement(
@@ -966,5 +993,6 @@ class ServerlessStack(Stack):
         CfnOutput(self, "JobsTable", value=jobs_table.table_name)
         CfnOutput(self, "SentencesTableNameOutput", value=sentences_table.table_name)
         CfnOutput(self, "LLMCallLogTableOutput", value=llm_log_table.table_name)
+        CfnOutput(self, "LLMCallExtractsTableOutput", value=llm_extracts_table.table_name)
         CfnOutput(self, "ApiUrl", value=api.url)
         CfnOutput(self, "StateMachineArn", value=state_machine.state_machine_arn)

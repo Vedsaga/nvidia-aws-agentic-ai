@@ -81,91 +81,91 @@ Phase 5: Select best JSON (average of pass1 + pass2 scores)
         * `[ ]` Each log entry must include a unique request ID and contextual metadata (e.g., `pipeline_stage`, `document_id`, `sentence_hash`, `attempt_number`, `generation_index`).
         * `[ ]` Store the *extracted* JSON and `reasoning` sections in a separate processing table, linked to the `sentence_hash` and `LLMCallLog` ID.
 
-    * `[ ]` **Develop Multi-Phase "Generate, Score, Select, Repeat" (GSSR) Pipeline:**
+    * `[x]` **Develop Multi-Phase "Generate, Score, Select, Repeat" (GSSR) Pipeline:**
         * GSSR applies to three extraction phases: **(1) Entity Extraction (D1), (2) Kriya Extraction (D2a), (3) Event Instance + Kāraka Extraction (D2b)**
         * **Maximum 5 attempts** per sentence to prevent infinite loops
         * **Temperature strategy:** Generation = 0.6, Scoring Pass 1 = 0.0, Scoring Pass 2 = 0.3
 
-    * `[ ]` **Phase 1: Generation (3x Independent Calls)**
-        * `[ ]` For each extraction stage (D1, D2a, D2b), make **3 independent LLM calls** to generate 3 distinct JSON variations.
-        * `[ ]` Use **temperature = 0.6** for focused but slightly diverse generations.
-        * `[ ]` Require the LLM to provide its `reasoning` in `<reasoning>` tags for each generated JSON structure.
+    * `[x]` **Phase 1: Generation (3x Independent Calls)**
+        * `[x]` For each extraction stage (D1, D2a, D2b), make **3 independent LLM calls** to generate 3 distinct JSON variations.
+        * `[x]` Use **temperature = 0.6** for focused but slightly diverse generations.
+        * `[x]` Require the LLM to provide its `reasoning` in `<reasoning>` tags for each generated JSON structure.
         * `[ ]` Log all 3 raw responses to `LLMCallLog` table with metadata.
 
-    * `[ ]` **Phase 2: Unidirectional Fidelity Check**
-        * `[ ]` Programmatically verify that all extracted text spans in the JSON exist verbatim in the `original_sentence`.
-        * `[ ]` **Direction: JSON ⊂ Sentence** (not bidirectional - the sentence can have extra words).
-        * `[ ]` Check: Every value in JSON (entity text, surface_text, entity in kāraka_links) must be a substring of `original_sentence`.
-        * `[ ]` Allow for case-insensitive matching with a warning if case differs.
-        * `[ ]` **Fidelity Failure Loop:**
-            * `[ ]` If a check fails for any of the 3 JSONs, identify the *exact* span that failed.
-            * `[ ]` Re-call the LLM with a correction prompt (use `correction_prompt.txt`) providing specific error feedback.
-            * `[ ]` Attempt correction once per failed JSON.
-            * `[ ]` If correction still fails, use the best available JSON and continue to scoring.
+    * `[x]` **Phase 2: Unidirectional Fidelity Check**
+        * `[x]` Programmatically verify that all extracted text spans in the JSON exist verbatim in the `original_sentence`.
+        * `[x]` **Direction: JSON ⊂ Sentence** (not bidirectional - the sentence can have extra words).
+        * `[x]` Check: Every value in JSON (entity text, surface_text, entity in kāraka_links) must be a substring of `original_sentence`.
+        * `[x]` Allow for case-insensitive matching with a warning if case differs.
+        * `[x]` **Fidelity Failure Loop:**
+            * `[x]` If a check fails for any of the 3 JSONs, identify the *exact* span that failed.
+            * `[x]` Re-call the LLM with a correction prompt (use `correction_prompt.txt`) providing specific error feedback.
+            * `[x]` Attempt correction once per failed JSON.
+            * `[x]` If correction still fails, use the best available JSON and continue to scoring.
 
-    * `[ ]` **Phase 2a: Consensus Check (Optimization)**
-        * `[ ]` After all 3 JSONs pass the fidelity check, perform a semantic comparison.
-        * `[ ]` **If all 3 JSONs are identical** (serialize with `json.dumps(sort_keys=True)` and compare):
-            * `[ ]` **Skip** the entire scoring process (Phase 3 and Phase 4).
-            * `[ ]` Select this single consensus JSON with score = 100.
-            * `[ ]` Proceed directly to Phase 5.
-        * `[ ]` **If JSONs are different:**
-            * `[ ]` Proceed to Phase 3 for scoring.
+    * `[x]` **Phase 2a: Consensus Check (Optimization)**
+        * `[x]` After all 3 JSONs pass the fidelity check, perform a semantic comparison.
+        * `[x]` **If all 3 JSONs are identical** (serialize with `json.dumps(sort_keys=True)` and compare):
+            * `[x]` **Skip** the entire scoring process (Phase 3 and Phase 4).
+            * `[x]` Select this single consensus JSON with score = 100.
+            * `[x]` Proceed directly to Phase 5.
+        * `[x]` **If JSONs are different:**
+            * `[x]` Proceed to Phase 3 for scoring.
 
-    * `[ ]` **Phase 3: LLM Scoring (Pass 1 - Primary Evaluation)**
-        * `[ ]` *(Triggered if consensus check in Phase 2a fails).*
-        * `[ ]` Send all 3 verified JSON objects to the Scorer LLM in a **single call** (use `scorer.txt` prompt).
-        * `[ ]` Use **temperature = 0.0** for maximum scoring consistency.
-        * `[ ]` Parse the Scorer's response to extract:
-            * Score (1-100) for *each* of the 3 JSONs
-            * Detailed reasoning breakdown (completeness, accuracy, fidelity)
-            * Strengths and weaknesses for each JSON
-        * `[ ]` **Scoring Failure Handling:**
-            * `[ ]` If *all 3* variations score below 70:
-                * Check if `attempts_count < 5`
-                * If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again (optionally include scorer feedback in generation prompt)
-                * If no (attempts_count == 5): Go to fallback selection
+    * `[x]` **Phase 3: LLM Scoring (Pass 1 - Primary Evaluation)**
+        * `[x]` *(Triggered if consensus check in Phase 2a fails).*
+        * `[x]` Send all 3 verified JSON objects to the Scorer LLM in a **single call** (use `scorer.txt` prompt).
+        * `[x]` Use **temperature = 0.0** for maximum scoring consistency.
+        * `[x]` Parse the Scorer's response to extract:
+            * `[x]` Score (1-100) for *each* of the 3 JSONs
+            * `[x]` Detailed reasoning breakdown (completeness, accuracy, fidelity)
+            * `[x]` Strengths and weaknesses for each JSON
+        * `[x]` **Scoring Failure Handling:**
+            * `[x]` If *all 3* variations score below 70:
+                * `[x]` Check if `attempts_count < 5`
+                * `[x]` If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again (optionally include scorer feedback in generation prompt)
+                * `[x]` If no (attempts_count == 5): Go to fallback selection
 
-    * `[ ]` **Phase 4: LLM Scoring (Pass 2 - Verification)**
-        * `[ ]` *(Triggered if at least one JSON scored ≥ 70 in Pass 1).*
-        * `[ ]` Initiate a **second, independent** scoring call to the Scorer LLM (same `scorer.txt` prompt).
-        * `[ ]` Use **temperature = 0.3** for slight variance to detect scorer bias.
-        * `[ ]` Parse scores for all 3 JSONs.
-        * `[ ]` If this second pass also fails to produce a score ≥ 70 for any variation:
-            * Check if `attempts_count < 5`
-            * If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again
-            * If no (attempts_count == 5): Go to fallback selection
+    * `[x]` **Phase 4: LLM Scoring (Pass 2 - Verification)**
+        * `[x]` *(Triggered if at least one JSON scored ≥ 70 in Pass 1).*
+        * `[x]` Initiate a **second, independent** scoring call to the Scorer LLM (same `scorer.txt` prompt).
+        * `[x]` Use **temperature = 0.3** for slight variance to detect scorer bias.
+        * `[x]` Parse scores for all 3 JSONs.
+        * `[x]` If this second pass also fails to produce a score ≥ 70 for any variation:
+            * `[x]` Check if `attempts_count < 5`
+            * `[x]` If yes: Increment `attempts_count`, trigger Generation step (Phase 1) again
+            * `[x]` If no (attempts_count == 5): Go to fallback selection
 
-    * `[ ]` **Phase 5: Final Selection and Graph Construction**
-        * `[ ]` Combine scores from Pass 1 and Pass 2: `combined_score = (score_pass1 + score_pass2) / 2`
-        * `[ ]` Select the JSON with the highest combined score.
-        * `[ ]` **Update Sentence Table:**
+    * `[x]` **Phase 5: Final Selection and Graph Construction**
+        * `[x]` Combine scores from Pass 1 and Pass 2: `combined_score = (score_pass1 + score_pass2) / 2`
+        * `[x]` Select the JSON with the highest combined score.
+        * `[x]` **Update Sentence Table:**
             * Set `best_score` = selected JSON's combined score
             * Set `status = KG_COMPLETE`
             * Set `attempts_count` = current attempt number
             * Set `needs_review = FALSE`
-        * `[ ]` Use the final selected JSON to create entities, events, and kāraka links in NetworkX:
-            * Create entity nodes with properties: `{text, type, sentence_hash}`
-            * Create event instance nodes with properties: `{instance_id, kriyā_concept, surface_text, prayoga, sentence_hash}`
-            * Create kāraka edges between event instances and entities with properties: `{role, reasoning, sentence_hash}`
-        * `[ ]` Create an embedding for the `original_sentence` using `llama-3.2-nv-embedqa-1b-v2` and store it in the vector database with `sentence_hash` as the key.
+        * `[x]` Use the final selected JSON to create entities, events, and kāraka links in NetworkX:
+            * `[x]` Create entity nodes with properties: `{text, type, sentence_hash}`
+            * `[x]` Create event instance nodes with properties: `{instance_id, kriyā_concept, surface_text, prayoga, sentence_hash}`
+            * `[x]` Create kāraka edges between event instances and entities with properties: `{role, reasoning, sentence_hash}`
+        * `[x]` Create an embedding for the `original_sentence` using `llama-3.2-nv-embedqa-1b-v2` and store it in the vector database with `sentence_hash` as the key.
 
-    * `[ ]` **Fallback Selection (When Max Attempts Reached):**
-        * `[ ]` If after 5 attempts no JSON scores ≥ 70:
-            * Select the JSON with the highest score from the last attempt
-            * **Update Sentence Table:**
+    * `[x]` **Fallback Selection (When Max Attempts Reached):**
+        * `[x]` If after 5 attempts no JSON scores ≥ 70:
+            * `[x]` Select the JSON with the highest score from the last attempt
+            * `[x]` **Update Sentence Table:**
                 * Set `status = KG_COMPLETE`
                 * Set `needs_review = TRUE`
                 * Set `failure_reason` = "MAX_ATTEMPTS_REACHED" or "LOW_QUALITY_SCORES"
                 * Set `best_score` = the fallback score
                 * Set `attempts_count = 5`
-            * Log warning for manual review queue
-            * Still create graph nodes/edges using the best available JSON
+            * `[x]` Log warning for manual review queue
+            * `[x]` Still create graph nodes/edges using the best available JSON
 
-    * `[ ]` **Data Storage Requirement:**
-        * `[ ]` Ensure that full sentences are *not* stored directly within the NetworkX graph nodes.
-        * `[ ]` Instead, store `sentence_hash` in NetworkX node/edge properties that link back to the `Sentence Table` and the vector database.
-        * `[ ]` Graph queries can join with Sentence Table using `sentence_hash` to retrieve original text when needed.
+    * `[x]` **Data Storage Requirement:**
+        * `[x]` Ensure that full sentences are *not* stored directly within the NetworkX graph nodes.
+        * `[x]` Instead, store `sentence_hash` in NetworkX node/edge properties that link back to the `Sentence Table` and the vector database.
+        * `[x]` Graph queries can join with Sentence Table using `sentence_hash` to retrieve original text when needed.
 
 ---
 

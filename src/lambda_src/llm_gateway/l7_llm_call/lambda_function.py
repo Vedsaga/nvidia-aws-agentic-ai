@@ -11,6 +11,7 @@ dynamodb = boto3.client("dynamodb")
 
 # Environment variables
 LOG_TABLE = os.environ['LLM_CALL_LOG_TABLE']
+PARSED_TABLE = os.environ.get('LLM_CALL_PARSED_TABLE')
 KG_BUCKET = os.environ['KG_BUCKET']
 GENERATE_ENDPOINT = os.environ.get('GENERATE_ENDPOINT')
 if not GENERATE_ENDPOINT:
@@ -41,10 +42,11 @@ def lambda_handler(event, context):
         temperature = event.get('temperature', 0.6)
         attempt_number = event.get('attempt_number', 1)
         generation_index = event.get('generation_index', 1)
-        
+
         # Generate call ID and start timing
         call_id = str(uuid.uuid4())
         start_time = time.time()
+        timestamp_ms = str(int(start_time * 1000))
         
         # Load prompt template from S3
         try:
@@ -76,7 +78,7 @@ def lambda_handler(event, context):
             TableName=LOG_TABLE,
             Item={
                 'call_id': {'S': call_id},
-                'timestamp': {'N': str(int(start_time * 1000))},
+                'timestamp': {'N': timestamp_ms},
                 'job_id': {'S': job_id},
                 'sentence_hash': {'S': sentence_hash},
                 'pipeline_stage': {'S': stage},
@@ -98,6 +100,7 @@ def lambda_handler(event, context):
         )
         
         latency_ms = int((time.time() - start_time) * 1000)
+        latency_str = str(latency_ms)
         
         if response.status_code == 200:
             response_data = response.json()
@@ -128,19 +131,39 @@ def lambda_handler(event, context):
                 TableName=LOG_TABLE,
                 Key={
                     'call_id': {'S': call_id},
-                    'timestamp': {'N': str(int(start_time * 1000))}
+                    'timestamp': {'N': timestamp_ms}
                 },
                 UpdateExpression='SET #status = :status, response_json = :resp, latency_ms = :lat, raw_response = :raw, extracted_json = :ejson, extracted_reasoning = :reas',
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
                     ':status': {'S': 'success'},
                     ':resp': {'S': json.dumps(response_data)},
-                    ':lat': {'N': str(latency_ms)},
+                    ':lat': {'N': latency_str},
                     ':raw': {'S': raw_response},
                     ':ejson': {'S': extracted_json},
                     ':reas': {'S': extracted_reasoning}
                 }
             )
+
+            if PARSED_TABLE:
+                parsed_item = {
+                    'call_id': {'S': call_id},
+                    'timestamp': {'N': timestamp_ms},
+                    'sentence_hash': {'S': sentence_hash},
+                    'pipeline_stage': {'S': stage},
+                    'attempt_number': {'N': str(attempt_number)},
+                    'generation_index': {'N': str(generation_index)}
+                }
+                if job_id:
+                    parsed_item['job_id'] = {'S': job_id}
+                if extracted_json:
+                    parsed_item['extracted_json'] = {'S': extracted_json}
+                if extracted_reasoning:
+                    parsed_item['extracted_reasoning'] = {'S': extracted_reasoning}
+                try:
+                    dynamodb.put_item(TableName=PARSED_TABLE, Item=parsed_item)
+                except Exception as parse_err:
+                    print(f"Warning: failed to store parsed output for {call_id}: {parse_err}")
             
             return response_data
         else:
@@ -149,14 +172,14 @@ def lambda_handler(event, context):
                 TableName=LOG_TABLE,
                 Key={
                     'call_id': {'S': call_id},
-                    'timestamp': {'N': str(int(start_time * 1000))}
+                    'timestamp': {'N': timestamp_ms}
                 },
                 UpdateExpression='SET #status = :status, error_msg = :err, latency_ms = :lat',
                 ExpressionAttributeNames={'#status': 'status'},
                 ExpressionAttributeValues={
                     ':status': {'S': 'error'},
                     ':err': {'S': f"HTTP {response.status_code}: {response.text}"},
-                    ':lat': {'N': str(latency_ms)}
+                    ':lat': {'N': latency_str}
                 }
             )
             raise Exception(f"LLM call failed: {response.status_code} {response.text}")
@@ -170,7 +193,7 @@ def lambda_handler(event, context):
                     TableName=LOG_TABLE,
                     Key={
                         'call_id': {'S': call_id},
-                        'timestamp': {'N': str(int(start_time * 1000))}
+                        'timestamp': {'N': timestamp_ms}
                     },
                     UpdateExpression='SET #status = :status, error_msg = :err',
                     ExpressionAttributeNames={'#status': 'status'},
@@ -179,6 +202,6 @@ def lambda_handler(event, context):
                         ':err': {'S': str(e)}
                     }
                 )
-            except:
+            except Exception:
                 pass
         raise

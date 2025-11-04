@@ -12,6 +12,7 @@ Globals:
         JOBS_TABLE: DocumentJobs
         SENTENCES_TABLE: Sentences
         LLM_CALL_LOG_TABLE: LLMCallLog
+  LLM_CALL_PARSED_TABLE: LLMCallExtracts
         RAW_BUCKET: !Ref RawBucket
         VERIFIED_BUCKET: !Ref VerifiedBucket
         KG_BUCKET: !Ref KGBucket
@@ -96,6 +97,33 @@ Resources:
               KeyType: HASH
           Projection:
             ProjectionType: ALL
+        - IndexName: BySentenceHash
+          KeySchema:
+            - AttributeName: sentence_hash
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      BillingMode: PAY_PER_REQUEST
+
+  LLMExtractTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: LLMCallExtracts
+      AttributeDefinitions:
+        - AttributeName: call_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: sentence_hash
+          AttributeType: S
+      KeySchema:
+        - AttributeName: call_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
         - IndexName: BySentenceHash
           KeySchema:
             - AttributeName: sentence_hash
