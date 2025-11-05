@@ -1,5 +1,6 @@
 {
   "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.0",
     "aws-cdk": "^2.1031.1"
   }
 }
