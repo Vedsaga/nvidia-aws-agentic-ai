@@ -47,7 +47,7 @@ All UI should leverage **Shadcn components**, **not custom-built ones**, unless 
   npm install lucide-react @tanstack/react-query axios
   ```
 * [ ] Configure Tailwind (colors, dark mode, container spacing).
-* [ ] Create `.env.local` → define `NEXT_PUBLIC_API_URL`.
+* [ ] Create `.env.local` → define `APP_API_GATEWAY_URL`.
 
 ---
 
@@ -93,7 +93,7 @@ Based on your shell script, we have these main endpoints:
 
 ```ts
 const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL,
+  baseURL: process.env.APP_API_GATEWAY_URL,
 });
 
 export const uploadFile = async (filename: string) =>
@@ -147,7 +147,7 @@ export const runQuery = async (query: string) =>
 ### **Initial Setup**
 
 * [ ] Initialize project, Tailwind, and Shadcn UI
-* [ ] Add `.env.local` with `NEXT_PUBLIC_API_URL`
+* [ ] Add `.env.local` with `APP_API_GATEWAY_URL`
 * [ ] Configure Lucide icons
 
 ### **UI Components**

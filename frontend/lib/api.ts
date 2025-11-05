@@ -24,7 +24,7 @@ function sanitizeBaseUrl(value?: string) {
 }
 
 function resolveBaseUrl() {
-  const explicit = sanitizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+  const explicit = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
   if (explicit) {
     return explicit;
   }
@@ -56,7 +56,7 @@ apiClient.interceptors.request.use((config) => {
     if (process.env.NODE_ENV === "development") {
       // eslint-disable-next-line no-console
       console.warn(
-        "API client: no valid base URL configured (NEXT_PUBLIC_API_URL or APP_API_GATEWAY_URL). Using relative requests."
+        "API client: no valid base URL configured (APP_API_GATEWAY_URL or APP_API_GATEWAY_URL). Using relative requests."
       );
     }
     // Ensure axios does not attempt to resolve the placeholder host

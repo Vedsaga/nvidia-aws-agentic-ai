@@ -60,7 +60,7 @@ Polling:
 
 `.env.local`:
 ```
-NEXT_PUBLIC_API_URL=https://7g3bdwsnsc.execute-api.us-east-1.amazonaws.com/prod
+APP_API_GATEWAY_URL=https://7g3bdwsnsc.execute-api.us-east-1.amazonaws.com/prod
 ```
 
 ## Run

@@ -15,7 +15,7 @@ Environment
 Create a `.env.local` in `frontend/` and set:
 
 ```
-NEXT_PUBLIC_API_URL=https://your-api-base-url/
+APP_API_GATEWAY_URL=https://your-api-base-url/
 ```
 
 Install & run
