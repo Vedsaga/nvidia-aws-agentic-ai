@@ -151,6 +151,17 @@ class ServerlessStack(Stack):
             ),
         )
 
+        queries_table = dynamodb.Table(
+            self,
+            "QueriesTable",
+            table_name="Queries",
+            partition_key=dynamodb.Attribute(
+                name="query_id", type=dynamodb.AttributeType.STRING
+            ),
+            billing_mode=dynamodb.BillingMode.PAY_PER_REQUEST,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
         # ========================================
         # LAMBDA LAYERS
         # ========================================
@@ -660,6 +671,8 @@ class ServerlessStack(Stack):
                 llm_log_table.table_arn + "/index/*",
                 llm_extracts_table.table_arn,
                 llm_extracts_table.table_arn + "/index/*",
+                queries_table.table_arn,
+                queries_table.table_arn + "/index/*",
             ],
         )
         bedrock_policy = iam.PolicyStatement(
@@ -735,18 +748,9 @@ class ServerlessStack(Stack):
         sentences_table.grant_read_data(query_processor)
         
         # Grant DynamoDB permissions for Queries table
-        query_submit.add_to_role_policy(iam.PolicyStatement(
-            actions=["dynamodb:PutItem", "dynamodb:GetItem", "dynamodb:UpdateItem"],
-            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
-        ))
-        query_status.add_to_role_policy(iam.PolicyStatement(
-            actions=["dynamodb:GetItem"],
-            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
-        ))
-        query_processor.add_to_role_policy(iam.PolicyStatement(
-            actions=["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Scan"],
-            resources=[f"arn:aws:dynamodb:{self.region}:{self.account}:table/Queries"]
-        ))
+        queries_table.grant_read_write_data(query_submit)
+        queries_table.grant_read_data(query_status)
+        queries_table.grant_read_write_data(query_processor)
         
         # Add LLM function name to agent environments
         for agent_func in [extract_entities, extract_kriya, build_events, audit_events, 
@@ -945,52 +949,65 @@ class ServerlessStack(Stack):
             description="API for knowledge graph processing and observability",
         )
 
+        # CORS configuration
+        cors_options = apigw.CorsOptions(
+            allow_origins=apigw.Cors.ALL_ORIGINS,
+            allow_methods=apigw.Cors.ALL_METHODS,
+            allow_headers=[
+                "Content-Type",
+                "X-Amz-Date",
+                "Authorization",
+                "X-Api-Key",
+                "X-Amz-Security-Token",
+                "X-Amz-User-Agent"
+            ]
+        )
+
         # POST /upload
-        upload_resource = api.root.add_resource("upload")
+        upload_resource = api.root.add_resource("upload", default_cors_preflight_options=cors_options)
         upload_resource.add_method("POST", apigw.LambdaIntegration(upload_handler))
 
         # GET /status/{job_id}
-        status_resource = api.root.add_resource("status")
-        job_id_resource = status_resource.add_resource("{job_id}")
+        status_resource = api.root.add_resource("status", default_cors_preflight_options=cors_options)
+        job_id_resource = status_resource.add_resource("{job_id}", default_cors_preflight_options=cors_options)
         job_id_resource.add_method(
             "GET", apigw.LambdaIntegration(update_doc_status_api)
-        )  # Use the renamed L_UpdateDocStatus
+        )
 
         # POST /query
-        query_resource = api.root.add_resource("query")
+        query_resource = api.root.add_resource("query", default_cors_preflight_options=cors_options)
         query_resource.add_method("POST", apigw.LambdaIntegration(synthesize_answer))
 
         # POST /query/submit
-        query_submit_resource = query_resource.add_resource("submit")
+        query_submit_resource = query_resource.add_resource("submit", default_cors_preflight_options=cors_options)
         query_submit_resource.add_method("POST", apigw.LambdaIntegration(query_submit))
 
         # GET /query/status/{query_id}
-        query_status_resource = query_resource.add_resource("status")
-        query_id_resource = query_status_resource.add_resource("{query_id}")
+        query_status_resource = query_resource.add_resource("status", default_cors_preflight_options=cors_options)
+        query_id_resource = query_status_resource.add_resource("{query_id}", default_cors_preflight_options=cors_options)
         query_id_resource.add_method("GET", apigw.LambdaIntegration(query_status))
 
         # GET /processing-chain/{doc_id}
-        chain_resource = api.root.add_resource("processing-chain")
-        doc_chain_resource = chain_resource.add_resource("{doc_id}")
+        chain_resource = api.root.add_resource("processing-chain", default_cors_preflight_options=cors_options)
+        doc_chain_resource = chain_resource.add_resource("{doc_id}", default_cors_preflight_options=cors_options)
         doc_chain_resource.add_method(
             "GET", apigw.LambdaIntegration(get_processing_chain)
         )
 
         # GET /sentence-chain/{sentence_hash}
-        sentence_chain_resource = api.root.add_resource("sentence-chain")
-        sentence_hash_resource = sentence_chain_resource.add_resource("{sentence_hash}")
+        sentence_chain_resource = api.root.add_resource("sentence-chain", default_cors_preflight_options=cors_options)
+        sentence_hash_resource = sentence_chain_resource.add_resource("{sentence_hash}", default_cors_preflight_options=cors_options)
         sentence_hash_resource.add_method(
             "GET", apigw.LambdaIntegration(get_sentence_chain)
         )
 
         # GET /docs
-        api.root.add_resource("docs").add_method(
-            "GET", apigw.LambdaIntegration(list_all_docs)
-        )
+        docs_resource = api.root.add_resource("docs", default_cors_preflight_options=cors_options)
+        docs_resource.add_method("GET", apigw.LambdaIntegration(list_all_docs))
 
         # POST /trigger/{job_id} - Manual trigger for processing
-        trigger_resource = api.root.add_resource("trigger")
-        trigger_job_resource = trigger_resource.add_resource("{job_id}")
+        trigger_resource = api.root.add_resource("trigger", default_cors_preflight_options=cors_options)
+        trigger_job_resource = trigger_resource.add_resource("{job_id}", default_cors_preflight_options=cors_options)
         trigger_job_resource.add_method(
             "POST", apigw.LambdaIntegration(manual_trigger)
         )

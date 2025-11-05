@@ -57,6 +57,11 @@ def lambda_handler(event, context):
         # 5. Return the URL and job_id to the client
         return {
             "statusCode": 200,
+            "headers": {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
+            },
             "body": json.dumps(
                 {
                     "message": "Pre-signed URL generated successfully.",
@@ -69,7 +74,23 @@ def lambda_handler(event, context):
 
     except ClientError as e:
         print(f"Boto3 error: {e}")
-        return {"statusCode": 500, "body": json.dumps({"error": "AWS service error"})}
+        return {
+            "statusCode": 500, 
+            "headers": {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
+            },
+            "body": json.dumps({"error": "AWS service error"})
+        }
     except Exception as e:
         print(f"Handler error: {e}")
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {
+            "statusCode": 500, 
+            "headers": {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token',
+                'Access-Control-Allow-Methods': 'OPTIONS,POST,GET'
+            },
+            "body": json.dumps({"error": str(e)})
+        }
