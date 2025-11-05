@@ -24,9 +24,9 @@ function sanitizeBaseUrl(value?: string) {
 }
 
 function resolveBaseUrl() {
-  // Prefer NEXT_PUBLIC_API_URL (exposed to client builds), then a shared
+  // Prefer APP_API_GATEWAY_URL (exposed to client builds), then a shared
   // APP_API_GATEWAY_URL value for server-side workflows.
-  const explicit = sanitizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+  const explicit = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
   if (explicit) return explicit;
   const shared = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
   if (shared) return shared;
@@ -290,7 +290,7 @@ export async function postQuery(query: string, signal?: AbortSignal): Promise<Qu
   }
 }
 
-export async function postQuerySubmit(question: string): Promise<{ query_id: string; [key: string]: unknown }> {
+export async function postQuerySubmit(question: string): Promise<{ query_id: string;[key: string]: unknown }> {
   try {
     const res = await apiClient.post(`/query/submit`, { question });
     const data = res.data || {};
