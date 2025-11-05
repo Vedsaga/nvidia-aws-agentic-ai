@@ -24,14 +24,12 @@ function sanitizeBaseUrl(value?: string) {
 }
 
 function resolveBaseUrl() {
-  const explicit = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
-  if (explicit) {
-    return explicit;
-  }
+  // Prefer NEXT_PUBLIC_API_URL (exposed to client builds), then a shared
+  // APP_API_GATEWAY_URL value for server-side workflows.
+  const explicit = sanitizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+  if (explicit) return explicit;
   const shared = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
-  if (shared) {
-    return shared;
-  }
+  if (shared) return shared;
   if (process.env.NODE_ENV === "development") {
     console.warn("API base URL is not configured; falling back to relative routes");
   }
@@ -40,8 +38,13 @@ function resolveBaseUrl() {
 
 const baseURL = resolveBaseUrl();
 
+// In the browser we proxy API calls through a same-origin Next.js route to
+// avoid CORS preflight issues with API Gateway (which may not have OPTIONS
+// configured). On the server (SSR) we call the gateway directly.
+const effectiveBaseURL = typeof window === "undefined" ? baseURL : "/api/proxy";
+
 export const apiClient = axios.create({
-  baseURL,
+  baseURL: effectiveBaseURL,
   headers: { "Content-Type": "application/json" },
   timeout: 15000,
 });
@@ -52,16 +55,19 @@ export const apiClient = axios.create({
 export const resolvedApiBaseUrl = baseURL;
 
 apiClient.interceptors.request.use((config) => {
-  if (!baseURL || baseURL.includes("your-api-gateway-url")) {
-    if (process.env.NODE_ENV === "development") {
-      // eslint-disable-next-line no-console
-      console.warn(
-        "API client: no valid base URL configured (APP_API_GATEWAY_URL or APP_API_GATEWAY_URL). Using relative requests."
-      );
+  // Only warn if the server-side configured base URL is missing or clearly
+  // a placeholder. When running in the browser we're intentionally using the
+  // local proxy (`/api/proxy`) so skip this warning there.
+  if (typeof window === "undefined") {
+    if (!baseURL || baseURL.includes("your-api-gateway-url")) {
+      if (process.env.NODE_ENV === "development") {
+        // eslint-disable-next-line no-console
+        console.warn(
+          "API client: no valid base URL configured (APP_API_GATEWAY_URL). Using relative requests."
+        );
+      }
+      return { ...config, baseURL: "" };
     }
-    // Ensure axios does not attempt to resolve the placeholder host
-    // and instead sends requests relative to the current origin.
-    return { ...config, baseURL: "" };
   }
   return config;
 });
@@ -95,7 +101,18 @@ function ensureDocumentRecord(entry: unknown): DocumentRecord {
     throw new ApiError("Invalid document payload received from API");
   }
   const e = entry as Record<string, unknown>;
-  const normalized = "job_id" in e || "status" in e ? e : normalizeDynamoItem(e as Record<string, unknown>);
+  // If the API returned DynamoDB-typed attributes (e.g. { S: "..." }) we
+  // need to normalize them. Sometimes the keys `job_id`/`status` exist but
+  // their values are objects (Dynamo typed). Detect that and normalize.
+  let normalized: Record<string, unknown> = e;
+  const looksLikeDynamoValue = (v: unknown) => {
+    return v && typeof v === "object" && ("S" in (v as Record<string, unknown>) || "N" in (v as Record<string, unknown>) || "BOOL" in (v as Record<string, unknown>) || "M" in (v as Record<string, unknown>) || "L" in (v as Record<string, unknown>));
+  };
+
+  if (looksLikeDynamoValue(e.job_id) || looksLikeDynamoValue(e.status) || ("job_id" in e && typeof e.job_id !== "string") || ("status" in e && typeof e.status !== "string")) {
+    normalized = normalizeDynamoItem(e as Record<string, unknown>);
+  }
+
   const jobId = (normalized.job_id as string) || (normalized.jobId as string);
   if (!jobId || typeof jobId !== "string") {
     throw new ApiError("Document missing job_id field");

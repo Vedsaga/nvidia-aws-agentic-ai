@@ -7,7 +7,10 @@ export function useDocuments() {
   return useQuery<DocumentRecord[]>({
     queryKey: ["documents"],
     queryFn: getDocs,
-    refetchInterval: 15000,
+    // Do not poll /docs automatically. Fetch once on page load; the user
+    // can manually refresh via the UI refresh button which calls
+    // `documentsQuery.refetch()`.
+    refetchInterval: false,
     staleTime: 5000,
     refetchOnWindowFocus: false,
   });

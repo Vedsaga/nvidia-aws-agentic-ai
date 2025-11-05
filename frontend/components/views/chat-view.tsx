@@ -40,8 +40,24 @@ export default function ChatView({
   }, [history]);
 
   useEffect(() => {
-    onHistoryChange(messages);
-  }, [messages, onHistoryChange]);
+    // Only notify parent when the messages array meaningfully differs from
+    // the incoming `history` prop. This avoids an update loop where
+    // ChatView updates messages -> notifies parent -> parent recreates
+    // history prop -> ChatView writes history into messages again.
+    const areMessagesEqual = (a: ChatMessage[], b: ChatMessage[]) => {
+      if (a === b) return true;
+      if (!a || !b) return false;
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i].id !== b[i].id) return false;
+      }
+      return true;
+    };
+
+    if (!areMessagesEqual(messages, history)) {
+      onHistoryChange(messages);
+    }
+  }, [messages, history, onHistoryChange]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
