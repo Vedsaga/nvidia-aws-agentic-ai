@@ -17,8 +17,8 @@ export default function HomePage() {
     return chatHistoryByJob[activeJobId] ?? [];
   }, [activeJobId, chatHistoryByJob]);
 
-  const handleDocumentSelect = (document: DocumentRecord) => {
-    setActiveDocument(document);
+  const handleDocumentSelect = (document: DocumentRecord | null) => {
+    setActiveDocument(document ?? null);
     setActiveReference(null);
   };
 
@@ -41,7 +41,7 @@ export default function HomePage() {
 
   return (
     <AppLayout
-      documentList={<DocumentList activeDocument={activeDocument} onSelect={handleDocumentSelect} />}
+  documentList={<DocumentList activeDocument={activeDocument} onSelect={handleDocumentSelect} />}
       mainPanel={
         <MainPanel
           activeDocument={activeDocument}

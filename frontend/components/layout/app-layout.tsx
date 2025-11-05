@@ -16,8 +16,8 @@ export default function AppLayout({
   hasReferencePanel = false,
 }: AppLayoutProps) {
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-black">
-      <div className="mx-auto flex h-screen max-w-7xl bg-white shadow-sm">
+    <div className="flex min-h-screen w-full bg-zinc-50 dark:bg-black">
+      <div className="flex h-screen w-full bg-white shadow-sm">
         <aside className="w-80 shrink-0 border-r border-zinc-200 bg-zinc-50/40">
           {documentList}
         </aside>

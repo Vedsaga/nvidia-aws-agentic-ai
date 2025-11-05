@@ -4,6 +4,7 @@ import "./globals.css";
 
 import React from "react";
 import Providers from "@/components/providers";
+import DevIndicatorSuppressor from "@/components/dev-indicator-suppressor";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+        <DevIndicatorSuppressor />
         <Providers>{children}</Providers>
       </body>
     </html>

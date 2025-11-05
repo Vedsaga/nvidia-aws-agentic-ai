@@ -1,7 +1,7 @@
 "use client";
 import React, { useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
+import { Button, type ButtonProps } from "@/components/ui/button";
 import {
   createUpload,
   triggerProcessing,
@@ -10,12 +10,17 @@ import {
 } from "@/lib/api";
 import type { DocumentRecord } from "@/lib/types";
 import { useToast } from "@/components/ui/toast-provider";
+import { cn } from "@/lib/utils";
 
 interface UploadButtonProps {
   onUploadStart?: (tempId: string, filename: string) => void;
   onUploadReady?: (tempId: string, document: DocumentRecord) => void;
   onUploadComplete?: (tempId: string, document: DocumentRecord) => void;
   onUploadError?: (tempId: string, message: string) => void;
+  buttonSize?: ButtonProps["size"];
+  buttonVariant?: ButtonProps["variant"];
+  buttonClassName?: string;
+  buttonLabel?: string;
 }
 
 export default function UploadButton({
@@ -23,6 +28,10 @@ export default function UploadButton({
   onUploadReady,
   onUploadComplete,
   onUploadError,
+  buttonSize = "sm",
+  buttonVariant = "default",
+  buttonClassName,
+  buttonLabel,
 }: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { notify } = useToast();
@@ -138,11 +147,13 @@ export default function UploadButton({
       />
       <Button
         type="button"
-        size="sm"
+        size={buttonSize}
+        variant={buttonVariant}
         onClick={() => fileInputRef.current?.click()}
         disabled={isUploading}
+        className={cn(buttonClassName)}
       >
-        {isUploading ? "Uploading…" : "+ New Upload"}
+        {isUploading ? "Uploading…" : buttonLabel ?? "+ New Upload"}
       </Button>
     </>
   );

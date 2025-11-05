@@ -1,12 +1,26 @@
 "use client";
 import React from "react";
 import { useStatus } from "@/hooks/useStatus";
+import type { JobStatus } from "@/lib/types";
 
 export default function DocumentStatusPanel({ jobId }: { jobId?: string }) {
   const { data, isLoading } = useStatus(jobId ?? undefined);
 
-  const status = (data as any)?.status ?? (data as any)?.Status ?? "-";
-  const progress = (data as any)?.progress_percentage ?? (data as any)?.progress_percentage ?? 0;
+  const status = (() => {
+    const s = data?.status;
+    if (typeof s === "string") return s;
+    const alt = (data as JobStatus | null)?.["Status"];
+    if (typeof alt === "string") return alt;
+    return "-";
+  })();
+
+  const progress = (() => {
+    const p = (data as JobStatus | null)?.progress_percentage;
+    if (typeof p === "number") return p;
+    const alt = (data as JobStatus | null)?.["progress_percentage"];
+    if (typeof alt === "number") return alt;
+    return 0;
+  })();
 
   return (
     <div className="p-6">

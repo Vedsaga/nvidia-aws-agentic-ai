@@ -12,7 +12,33 @@ import {
   UploadInitResponse,
 } from "./types";
 
-const baseURL = process.env.NEXT_PUBLIC_API_URL || "";
+function sanitizeBaseUrl(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.includes("your-api-gateway-url")) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function resolveBaseUrl() {
+  const explicit = sanitizeBaseUrl(process.env.NEXT_PUBLIC_API_URL);
+  if (explicit) {
+    return explicit;
+  }
+  const shared = sanitizeBaseUrl(process.env.APP_API_GATEWAY_URL);
+  if (shared) {
+    return shared;
+  }
+  if (process.env.NODE_ENV === "development") {
+    console.warn("API base URL is not configured; falling back to relative routes");
+  }
+  return "";
+}
+
+const baseURL = resolveBaseUrl();
 
 export const apiClient = axios.create({
   baseURL,
@@ -20,78 +46,105 @@ export const apiClient = axios.create({
   timeout: 15000,
 });
 
-function unwrapDynamoValue(value: any): any {
+// Provide runtime visibility for debugging and avoid accidentally sending
+// requests to the placeholder host. If no valid base URL is configured,
+// requests will use relative URLs so the browser's origin is used.
+export const resolvedApiBaseUrl = baseURL;
+
+apiClient.interceptors.request.use((config) => {
+  if (!baseURL || baseURL.includes("your-api-gateway-url")) {
+    if (process.env.NODE_ENV === "development") {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "API client: no valid base URL configured (NEXT_PUBLIC_API_URL or APP_API_GATEWAY_URL). Using relative requests."
+      );
+    }
+    // Ensure axios does not attempt to resolve the placeholder host
+    // and instead sends requests relative to the current origin.
+    return { ...config, baseURL: "" };
+  }
+  return config;
+});
+
+function unwrapDynamoValue(value: unknown): unknown {
   if (value == null) return value;
   if (typeof value !== "object") return value;
-  if ("S" in value) return value.S;
-  if ("N" in value) return Number(value.N);
-  if ("BOOL" in value) return Boolean(value.BOOL);
-  if ("M" in value && value.M) {
-    return normalizeDynamoItem(value.M as Record<string, any>);
+  const v = value as Record<string, unknown>;
+  if ("S" in v && typeof v.S === "string") return v.S;
+  if ("N" in v && (typeof v.N === "string" || typeof v.N === "number")) return Number(String(v.N));
+  if ("BOOL" in v) return Boolean((v.BOOL as unknown) as boolean);
+  if ("M" in v && v.M && typeof v.M === "object") {
+    return normalizeDynamoItem(v.M as Record<string, unknown>);
   }
-  if ("L" in value && Array.isArray(value.L)) {
-    return value.L.map((item: any) => unwrapDynamoValue(item));
+  if ("L" in v && Array.isArray(v.L)) {
+    return v.L.map((item) => unwrapDynamoValue(item));
   }
   return value;
 }
 
-function normalizeDynamoItem(item: Record<string, any>): Record<string, any> {
-  const output: Record<string, any> = {};
+function normalizeDynamoItem(item: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
   for (const key of Object.keys(item || {})) {
     output[key] = unwrapDynamoValue(item[key]);
   }
   return output;
 }
 
-function ensureDocumentRecord(entry: any): DocumentRecord {
+function ensureDocumentRecord(entry: unknown): DocumentRecord {
   if (!entry || typeof entry !== "object") {
     throw new ApiError("Invalid document payload received from API");
   }
-  const normalized = "job_id" in entry || "status" in entry ? entry : normalizeDynamoItem(entry as Record<string, any>);
-  const jobId = normalized.job_id || normalized.jobId;
+  const e = entry as Record<string, unknown>;
+  const normalized = "job_id" in e || "status" in e ? e : normalizeDynamoItem(e as Record<string, unknown>);
+  const jobId = (normalized.job_id as string) || (normalized.jobId as string);
   if (!jobId || typeof jobId !== "string") {
     throw new ApiError("Document missing job_id field");
   }
   return {
     ...normalized,
     job_id: jobId,
-    filename: normalized.filename || normalized.file_name || normalized.name || "(unnamed)",
-    status: normalized.status || normalized.document_status || "unknown",
+    filename: (normalized.filename as string) || (normalized.file_name as string) || (normalized.name as string) || "(unnamed)",
+    status: (normalized.status as string) || (normalized.document_status as string) || "unknown",
   } as DocumentRecord;
 }
 
-function normalizeProcessingEntry(entry: any): ProcessingChainEntry {
+function normalizeProcessingEntry(entry: unknown): ProcessingChainEntry {
   if (!entry || typeof entry !== "object") {
     return {
       stage: "Unknown",
       timestamp: new Date().toISOString(),
     };
   }
-  const normalized = normalizeDynamoItem(entry as Record<string, any>);
+  const normalized = normalizeDynamoItem(entry as Record<string, unknown>);
   return {
     ...normalized,
-    stage: normalized.stage || normalized.Stage || "Unknown",
-    timestamp: normalized.timestamp || normalized.Timestamp || new Date().toISOString(),
-    status: normalized.status || normalized.Status,
-    sentence_number: normalized.sentence_number || normalized.sentenceNumber,
-    duration_ms: normalized.duration_ms || normalized.durationMs,
+    stage: (normalized.stage as string) || (normalized.Stage as string) || "Unknown",
+    timestamp: (normalized.timestamp as string) || (normalized.Timestamp as string) || new Date().toISOString(),
+    status: (normalized.status as string) || (normalized.Status as string),
+    sentence_number: (normalized.sentence_number as number) || (normalized.sentenceNumber as number),
+    duration_ms: (normalized.duration_ms as number) || (normalized.durationMs as number),
   } as ProcessingChainEntry;
 }
 
 function toApiError(error: unknown): ApiError {
   if (axios.isAxiosError(error)) {
-    const axiosError = error as any;
+    const axiosError = error as {
+      response?: { status?: number; data?: unknown };
+      message?: string;
+      code?: string;
+    };
     const status = axiosError.response?.status;
     const payload = axiosError.response?.data;
+    const payloadRec = payload as Record<string, unknown> | undefined;
     const message =
-      payload?.message ||
-      payload?.error ||
+      (payloadRec && typeof payloadRec.message === "string" && payloadRec.message) ||
+      (payloadRec && typeof payloadRec.error === "string" && (payloadRec.error as string)) ||
       (typeof payload === "string" ? payload : undefined) ||
       axiosError.message ||
       "Request failed";
-  const apiError = new ApiError(message, status, payload);
-  apiError.payload = payload;
-  apiError.isCanceled = axiosError.code === "ERR_CANCELED";
+    const apiError = new ApiError(message, status, payload);
+    apiError.payload = payload;
+    apiError.isCanceled = axiosError.code === "ERR_CANCELED";
     return apiError;
   }
   if (error instanceof ApiError) {

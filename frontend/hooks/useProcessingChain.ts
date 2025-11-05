@@ -1,7 +1,7 @@
 "use client";
 import { useQuery } from "@tanstack/react-query";
-import { getProcessingChain } from "@/lib/api";
-import type { ProcessingChainResponse } from "@/lib/types";
+import { getProcessingChain, isApiError } from "@/lib/api";
+import type { ProcessingChainResponse, ApiError } from "@/lib/types";
 
 export function useProcessingChain(jobId: string | undefined, enabled: boolean = true) {
   const shouldEnable = Boolean(jobId) && enabled;
@@ -17,8 +17,7 @@ export function useProcessingChain(jobId: string | undefined, enabled: boolean =
     refetchInterval: 5000,
     refetchOnWindowFocus: false,
     retry: (failureCount, error) => {
-      const status = (error as any)?.status;
-      if (status === 502) {
+      if (isApiError(error) && (error as unknown as ApiError).status === 502) {
         return false;
       }
       return failureCount < 3;
