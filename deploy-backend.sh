@@ -20,11 +20,8 @@ print_info() {
 }
 
 # 1. Load the manual .env file
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found."
-    exit 1
-fi
-export $(grep -v '^#' .env | xargs)
+source scripts/load_env.sh
+load_env
 print_success "Environment variables loaded"
 
 # 2. Bootstrap the environment (force to ensure resources exist)

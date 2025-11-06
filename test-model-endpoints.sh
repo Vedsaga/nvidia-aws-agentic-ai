@@ -13,11 +13,8 @@ print_error() { echo -e "${RED}✗ $1${NC}"; }
 print_info() { echo -e "${BLUE}ℹ $1${NC}"; }
 
 # Load environment variables
-if [ ! -f .env ]; then
-    print_error ".env file not found"
-    exit 1
-fi
-export $(grep -v '^#' .env | xargs)
+source scripts/load_env.sh
+load_env
 
 echo -e "\n${BLUE}=== Model Endpoint Testing ===${NC}\n"
 

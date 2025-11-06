@@ -2,9 +2,10 @@
 set -e
 
 # Source the frontend .env file
+source scripts/load_env.sh
 if [ -f .env ]; then
     echo "Loading environment variables from .env"
-    export $(grep -v '^#' .env | xargs)
+    load_env
     echo "GENERATE_ENDPOINT: $APP_GENERATE_ENDPOINT_URL"
     echo "EMBED_ENDPOINT: $APP_EMBED_ENDPOINT_URL"
 else

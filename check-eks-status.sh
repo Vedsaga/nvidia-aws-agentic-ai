@@ -52,11 +52,8 @@ fi
 
 # 2. Load .env credentials
 print_step "[2/9] Loading environment credentials..."
-if [ ! -f .env ]; then
-    print_error ".env file not found in current directory"
-    exit 1
-fi
-export $(grep -v '^#' .env | xargs)
+source scripts/load_env.sh
+load_env
 print_success "Credentials loaded from .env"
 
 # 3. Configure AWS profile

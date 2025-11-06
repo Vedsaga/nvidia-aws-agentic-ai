@@ -2,11 +2,8 @@
 set -e # Exit immediately if a command fails
 
 # 1. Load credentials
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found."
-    exit 1
-fi
-export $(grep -v '^#' .env | xargs)
+source scripts/load_env.sh
+load_env
 
 # 2. Find the *real* cluster name
 echo "Finding EKS cluster..."
