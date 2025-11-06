@@ -33,27 +33,23 @@ cdk bootstrap aws://$AWS_ACCOUNT_ID/$AWS_REGION \
 print_success "Bootstrap complete"
 
 # 3. Check if there are changes to deploy
-print_step "Checking for changes in ServerlessStack..."
-DIFF_OUTPUT=$(cdk diff ServerlessStack \
-    --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
-    --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL 2>&1 || true)
+print_step "Checking for changes in EventDrivenStack..."
+DIFF_OUTPUT=$(cdk diff EventDrivenStack 2>&1 || true)
 
 if echo "$DIFF_OUTPUT" | grep -q "There were no differences"; then
-    print_info "No changes detected in ServerlessStack - skipping deployment"
+    print_info "No changes detected in EventDrivenStack - skipping deployment"
     SKIP_DEPLOY=true
 else
     print_info "Changes detected - proceeding with deployment"
     SKIP_DEPLOY=false
 fi
 
-# 4. Deploy the serverless stack (only if changes detected or forced)
+# 4. Deploy the event-driven stack (only if changes detected or forced)
 if [ "$SKIP_DEPLOY" = false ] || [ "$1" == "--force" ]; then
-    print_step "Deploying ServerlessStack (Lambdas, DynamoDB, API GW...)"
-    cdk deploy ServerlessStack \
+    print_step "Deploying EventDrivenStack (Event Bus, Lambdas, DynamoDB...)"
+    cdk deploy EventDrivenStack \
         --outputs-file ./cdk-outputs-backend.json \
-        --require-approval never \
-        --context nvidia_api_key=$NVIDIA_BUILD_API_KEY \
-        --context nvidia_email=$NVIDIA_ACCOUNT_EMAIL
+        --require-approval never
     print_success "Deployment complete"
     
     # 5. Update the frontend .env file
@@ -64,35 +60,11 @@ else
     print_info "Use './deploy-backend.sh --force' to force redeployment"
 fi
 
-# 6. Get the KG Bucket name from the outputs (always run for prompt sync)
-print_step "Getting KnowledgeGraphBucket name from outputs..."
-KG_BUCKET_NAME=$(jq -r '.ServerlessStack.KGBucket' ./cdk-outputs-backend.json)
-
-if [ -z "$KG_BUCKET_NAME" ] || [ "$KG_BUCKET_NAME" == "null" ]; then
-    echo "ERROR: Could not find KGBucket in cdk-outputs-backend.json"
-    echo "Please ensure ServerlessStack exports 'KGBucket' as an output."
-    exit 1
-fi
-print_success "Bucket name: $KG_BUCKET_NAME"
-
-# 7. Sync the prompts directory to the KG Bucket (only changed files)
-print_step "Syncing prompts/ directory to s3://$KG_BUCKET_NAME/prompts/..."
-SYNC_OUTPUT=$(aws s3 sync ./prompts/ s3://$KG_BUCKET_NAME/prompts/ --delete 2>&1)
-
-# Count uploaded files
-UPLOADED=$(echo "$SYNC_OUTPUT" | grep -c "upload:" || echo "0")
-DELETED=$(echo "$SYNC_OUTPUT" | grep -c "delete:" || echo "0")
-
-if [ "$UPLOADED" -gt 0 ] || [ "$DELETED" -gt 0 ]; then
-    print_success "Synced: $UPLOADED uploaded, $DELETED deleted"
-else
-    print_info "No changes in prompts/ directory"
-fi
-
 echo ""
-print_success "Backend deployment complete!"
+print_success "Event-driven architecture deployment complete!"
 echo ""
 echo "Summary:"
-echo "  • Prompts: s3://$KG_BUCKET_NAME/prompts/"
-echo "  • API Gateway URL: Check .env"
+echo "  • Event Bus: karaka-events"
+echo "  • Lambda Handlers: Check AWS Console"
+echo "  • Outputs: cdk-outputs-backend.json"
 echo ""
