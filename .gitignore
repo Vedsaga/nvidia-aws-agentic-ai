@@ -51,7 +51,7 @@ Thumbs.db
 # Temporary files
 *.tmp
 .kiro_command_output.txt
-.kiro_exec.sh
+
 
 # Sensitive files
 *.pem
