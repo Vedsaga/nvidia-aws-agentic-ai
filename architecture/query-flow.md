@@ -48,6 +48,7 @@ CREATE TABLE query_retrievals (
 ## Implementation Plan
 
 ### 1. Query Submission
+
 ```python
 POST /queries
 {
@@ -63,18 +64,21 @@ Response:
 ```
 
 ### 2. Retrieval Pipeline
+
 - **Vector Search**: Embedding-based similarity
 - **Graph Search**: Entity and relation matching
 - **Hybrid Approach**: Combine multiple methods
 - **Ranking**: Score and rank retrieved sentences
 
 ### 3. Answer Generation
+
 - **Context Assembly**: Combine retrieved sentences
 - **LLM Synthesis**: Generate coherent answer
 - **Citation Tracking**: Link answer to sources
 - **Quality Validation**: Verify answer quality
 
 ### 4. Status Polling
+
 ```python
 GET /queries/{query_id}/status
 
@@ -96,7 +100,7 @@ Response:
 
 ## API Design
 
-```
+```text
 POST /queries                          - Submit new query
 GET /queries/{query_id}/status         - Poll query status
 GET /queries/{query_id}/references     - Get detailed references
@@ -105,7 +109,7 @@ POST /queries/{query_id}/feedback      - Provide feedback on answer
 
 ## Processing States
 
-```
+```text
 QUERY_SUBMITTED → QUERY_PROCESSING → QUERY_COMPLETED
                ↘ QUERY_FAILED
 ```

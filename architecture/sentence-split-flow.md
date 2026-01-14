@@ -7,27 +7,31 @@ Document sentence splitting flow with chunking strategy and async LLM processing
 ## Flow Description
 
 ### Phase 1: Document Preparation
+
 1. **Client Request**: `POST /documents/{doc_id}/start-splitting`
 2. **Document Validation**: Verify `upload_status = "UPLOAD_COMPLETE"`
 3. **Document Analysis**: Calculate total bytes, initialize splitting job
 4. **Response**: Return splitting job ID for progressive chunking
 
 ### Phase 2: Progressive Chunking
+
 1. **Client Request**: `POST /documents/{doc_id}/create-chunk`
 2. **Chunk Creation**: Create next chunk with optimal boundaries
 3. **LLM Submission**: Submit chunk to LLM queue immediately
 4. **Response**: Return chunk ID and progress metrics
 
 ### Phase 3: Iterative Chunk Processing
+
 1. **Client Polling**: `GET /chunks/{chunk_id}/status`
 2. **LLM Response Check**: Check latest LLM request status
 3. **Fidelity Validation**: Validate extracted sentences against chunk text
-4. **Adaptive Processing**: 
+4. **Adaptive Processing**:
    - If fidelity passes → Mark chunk complete
    - If fidelity fails → Adjust chunk boundaries and retry
    - If partial success → Process validated sentences, adjust for remainder
 
 ### Phase 4: Final Sentence Assembly
+
 1. **Completion Check**: All chunks validated and complete
 2. **Sentence Deduplication**: Handle overlapping chunk sentences
 3. **Global Ordering**: Assign final document sequence numbers
@@ -179,7 +183,7 @@ CREATE TABLE document_sentences (
 
 ## Implementation
 
-### Phase 1: Document Preparation
+### Phase 1 Implementation: Document Preparation
 
 ```python
 def handle_start_splitting_request(doc_id):
@@ -879,41 +883,48 @@ def create_adjusted_chunk(original_chunk, adjustment_strategy, parent_trace_id):
 ## Key Features
 
 ### 1. **Progressive Chunking (Based on Current Implementation)**
+
 - One chunk created per API call for fine-grained control
 - Paragraph-based chunking with 4000 char limit (like current)
 - Byte-level progress tracking (processed_bytes / total_bytes)
 - Overlapping chunks allowed for context preservation
 
 ### 2. **Fidelity Validation (Current Implementation Logic)**
+
 - Join all sentences from LLM and compare to original chunk
 - 95% similarity threshold using character set intersection
 - Length difference must be < 10 characters
 - **No regex fallback** - if LLM fails, chunk fails (as requested)
 
 ### 3. **Buffer-Based Completion Detection**
+
 - Document considered complete when all chunks before buffer zone (last 10%) are done
 - Handles the chicken-egg problem of not knowing when all chunks are created
 - 5-minute stability check for buffer zone chunks
 - Allows for chunk boundary adjustments without premature completion
 
 ### 4. **Multi-Request Chunk Processing**
+
 - Multiple LLM calls per chunk tracked in `chunk_llm_requests`
 - Request sequence tracking (1st attempt, 2nd retry, etc.)
 - Different request types: initial, fidelity_retry, context_expansion
 
 ### 5. **Separate Sentence Storage (As Requested)**
+
 - `sentences` table: Global sentence content (reusable across documents)
 - `sentence_positions` table: Document-specific positioning and sequence
 - Same sentence hash can appear in multiple documents
 - Deduplication of overlapping chunk results
 
 ### 6. **Adaptive Chunk Boundaries**
+
 - Chunks can overlap for better context
 - Version tracking for chunk refinements
 - Parent-child relationships between chunk versions
 - Context expansion tracking (bytes added left/right)
 
 ### 7. **Status Granularity**
+
 ```
 Document: not_started → splitting_in_progress → splitting_complete
                                              ↘ splitting_failed
@@ -924,6 +935,7 @@ Chunk: splitting_pending → splitting_in_progress → splitting_complete
 ```
 
 ### 8. **No Confidence Scores (As Requested)**
+
 - Removed confidence scoring - binary pass/fail based on fidelity
 - Focus on similarity score from current implementation
 - Simplified validation logic
@@ -960,6 +972,7 @@ GET /documents/{doc_id}/sentences          - Get validated sentences (when compl
 3. Create sentence validation and fidelity checks
 4. Add retry logic for failed chunks
 5. Implement sentence reassembly and deduplication#
+
 # Concept Explanations
 
 ### **Context Expansion Process**

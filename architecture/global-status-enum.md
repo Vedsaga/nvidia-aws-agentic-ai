@@ -55,7 +55,9 @@ class JobStatus(Enum):
 ## Status Flow Patterns
 
 ### Standard Three-State Pattern
+
 Most operations follow this pattern:
+
 - `{OPERATION}_PENDING` - Operation queued/ready to start
 - `{OPERATION}_COMPLETE` - Operation finished successfully  
 - `{OPERATION}_FAILED` - Operation failed with error details
@@ -69,7 +71,7 @@ Most operations follow this pattern:
 
 ### Status Transitions
 
-```
+```text
 PENDING → COMPLETE (success path)
 PENDING → FAILED (error path)
 FAILED → PENDING (retry - client triggered)
@@ -77,10 +79,9 @@ FAILED → PENDING (retry - client triggered)
 
 Note: COMPLETE states are terminal - no transitions allowed from them.
 
-
 ### LLM Call Arch
 
-```
+```text
 Business Layer (sentence-split-flow)
     ↓ (decides provider, model, reasoning)
 Prompt Layer (prompt-processor) 

@@ -188,6 +188,7 @@ CREATE TABLE kg_phase_results (
 Based on the Architecture Overview from README.md, we implement a **user-driven async architecture** where each junction point requires explicit client requests:
 
 ### Phase 1: Document KG Initialization
+
 1. **Client Request**: `POST /documents/{doc_id}/start-kg-processing`
 2. **Document Validation**: Verify `splitting_status = "splitting_complete"`
 3. **Efficient Status Check**: Count existing sentence statuses without loading all sentences
@@ -195,6 +196,7 @@ Based on the Architecture Overview from README.md, we implement a **user-driven 
 5. **Response**: Return processing job ID and sentence counts
 
 ### Phase 2: User-Controlled Sentence Processing
+
 1. **Client Request**: `POST /documents/{doc_id}/process-next-sentence`
 2. **Concurrency Check**: Verify global concurrent sentence limit not exceeded
 3. **Sentence Selection**: Find next sentence with `kg_extraction_pending` status
@@ -202,30 +204,36 @@ Based on the Architecture Overview from README.md, we implement a **user-driven 
 5. **Response**: Return sentence details and current phase information
 
 ### Phase 3: User-Driven Phase Progression (Following README Architecture)
+
 Based on the README.md architecture diagram, each extraction step requires user trigger:
 
 #### 3a. Entity Extraction Phase (L9: Extract Entities)
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/extract-entities`
 2. **Pre-validation**: Ensure sentence is in correct state and phase
 3. **Phase Initialization**: Create phase result record for entities
 4. **Response**: Return phase status and variation generation readiness
 
-#### 3b. Kriya Extraction Phase (L10: Extract Kriyā) 
+#### 3b. Kriya Extraction Phase (L10: Extract Kriyā)
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/extract-kriya`
 2. **Pre-validation**: Ensure entities phase is complete
 3. **Phase Initialization**: Create phase result record for kriya
 4. **Response**: Return phase status and variation generation readiness
 
 #### 3c. Karaka Extraction Phase (L11: Build Events)
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/extract-karaka`
 2. **Pre-validation**: Ensure entities and kriya phases are complete
 3. **Phase Initialization**: Create phase result record for karaka
 4. **Response**: Return phase status and variation generation readiness
 
 ### Phase 4: User-Controlled GSSR Variation Generation
+
 **Hierarchy**: Phase → Stage → Variations (V1, V2, V3, Vn...)
 
 #### 4a. Variation Generation (User-Driven)
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/generate-variation/{phase}/{variation_number}`
 2. **Pre-validation Checks**:
    - Ensure previous variation is complete (if not V1)
@@ -235,6 +243,7 @@ Based on the README.md architecture diagram, each extraction step requires user 
 4. **Response**: Return variation ID and generation status
 
 #### 4b. Variation Status Monitoring
+
 1. **Client Request**: `GET /variations/{variation_id}/status?phase={phase_name}`
 2. **Table Lookup**: Use phase_name to determine correct table (kg_entities, kg_kriya, kg_karaka)
 3. **LLM Response Check**: Process completed LLM responses
@@ -243,12 +252,14 @@ Based on the README.md architecture diagram, each extraction step requires user 
 6. **Response**: Return variation status and next action available
 
 #### 4c. Consensus Check and Scorer Phase
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/check-consensus/{phase}`
 2. **Consensus Validation**: Compare all completed variations
 3. **Scorer Decision**: If consensus achieved → skip scorer, else → run scorer
 4. **Response**: Return consensus status and scorer requirement
 
 #### 4d. Scorer Execution (If No Consensus)
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/run-scorer/{phase}`
 2. **Scorer Phase 1**: Run scorer with temp=0 (1-100 score)
 3. **Scorer Phase 2**: Run scorer with temp=0.6 (1-100 score)
@@ -257,6 +268,7 @@ Based on the README.md architecture diagram, each extraction step requires user 
 6. **Response**: Return scorer results and next action needed
 
 ### Phase 5: User-Driven Phase Transitions
+
 1. **Client Request**: `POST /sentences/{sentence_hash}/complete-phase/{phase}`
 2. **Validation**: Ensure all required stages are complete
 3. **Best Selection**: Choose stage with highest combined score
@@ -433,12 +445,6 @@ def get_config_value(key, default_value):
         return default_value
 ```
 
-
-
-
-
-
-
 ## API Design (User-Driven Architecture)
 
 Following the README.md architecture pattern where each junction requires user control:
@@ -483,7 +489,7 @@ PUT /kg-config/{key}                                   # Update configuration va
 
 **Hierarchy**: Phase → Stage → Variations
 
-```
+```text
 Phase: Entity
 ├── Stage: Generation (G)
 │   ├── Variation 1 (V1) → Fidelity Check → [Pass/Fail → Refine if needed]
@@ -501,6 +507,7 @@ Phase: Entity
 ```
 
 **User Control Points**:
+
 1. Generate each variation (V1, V2, V3...)
 2. Check variation status (triggers fidelity validation)
 3. Refine variation (if fidelity failed)
@@ -511,25 +518,29 @@ Phase: Entity
 ## Status Flow Patterns
 
 ### Document Level
-```
+
+```text
 not_started → kg_extraction_in_progress → kg_extraction_complete
            ↘ kg_extraction_failed
 ```
 
 ### Sentence Level
-```
+
+```text
 kg_extraction_pending → kg_extraction_in_progress → kg_extraction_complete
                      ↘ kg_extraction_failed
 ```
 
 ### Phase Level (per sentence)
-```
+
+```text
 not_started → in_progress → complete
            ↘ failed
 ```
 
 ### Variation Level (per phase)
-```
+
+```text
 pending → generating → completed
        ↘ failed
 ```
@@ -537,16 +548,19 @@ pending → generating → completed
 ## Error Scenarios and Handling
 
 ### LLM Processing Errors
+
 - **LLM timeout or rate limiting**: Automatic retry through existing LLM worker queue
 - **JSON parsing failures**: Mark variation as failed, allow refinement attempts
 - **Schema validation errors**: Provide structured feedback for refinement
 
 ### Fidelity Validation Errors
+
 - **Entity not found in text**: Generate refinement with specific feedback
 - **Low fidelity score**: Allow up to 3 refinement attempts before accepting best result
 - **Complete fidelity failure**: Accept best available variation and continue
 
 ### System Errors
+
 - **Database errors**: Full error logging with trace correlation
 - **Processing interruption**: State preserved, resumable from last successful point
 - **Concurrent processing**: Sequence-based locking prevents conflicts

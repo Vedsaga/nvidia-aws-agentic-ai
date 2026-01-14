@@ -127,12 +127,14 @@ for sentence in sentences:
 ## Industry Standard Practices
 
 ### 1. Distributed Tracing
+
 - Each request gets unique `trace_id` (UUID)
 - All operations within request use same `trace_id`
 - Nested operations get `parent_trace_id` for hierarchy
 - Standard: OpenTelemetry, Jaeger, Zipkin
 
 ### 2. Structured Logging
+
 ```python
 # Every log entry includes trace context
 logger.info("Document validation started", extra={
@@ -143,6 +145,7 @@ logger.info("Document validation started", extra={
 ```
 
 ### 3. Request Correlation
+
 - Client includes `X-Request-ID` header
 - Server generates `trace_id` if not provided
 - All downstream calls propagate trace context
@@ -150,6 +153,7 @@ logger.info("Document validation started", extra={
 ## Debugging & Monitoring Queries
 
 ### Find All Operations for a Document
+
 ```sql
 SELECT rt.operation, rt.status, rt.duration_ms, el.error_code
 FROM request_traces rt
@@ -159,6 +163,7 @@ ORDER BY rt.start_time;
 ```
 
 ### Find Failed Sentence Processing
+
 ```sql
 SELECT rt.sentence_hash, rt.operation, el.error_message
 FROM request_traces rt
@@ -167,6 +172,7 @@ WHERE rt.operation LIKE '%extract_%' AND rt.status = 'FAILED';
 ```
 
 ### Performance Analysis
+
 ```sql
 SELECT operation, 
        AVG(duration_ms) as avg_duration,
@@ -177,6 +183,7 @@ GROUP BY operation;
 ```
 
 ### End-to-End Request Flow
+
 ```sql
 SELECT operation, status, duration_ms, start_time
 FROM request_traces 
@@ -185,6 +192,7 @@ ORDER BY start_time;
 ```
 
 ### Track Operation Patterns
+
 ```sql
 -- Track URL regeneration patterns  
 SELECT doc_hash_256, COUNT(*) as regeneration_count

@@ -7,16 +7,19 @@ Centralized async LLM processing system with queue-based task management and sin
 ## Architecture Principles
 
 ### 1. **Queue-Based Processing**
+
 - All LLM requests go through centralized queue
 - Single worker processes tasks sequentially
 - Prevents LLM rate limiting and overload
 
 ### 2. **Async Request/Response**
+
 - Immediate request acceptance with pending status
 - Client polling for completion status
 - Decoupled from business logic flows
 
 ### 3. **Worker Management**
+
 - Single worker processes queue continuously
 - Idle mode when no tasks pending
 - Auto-trigger on new task arrival
@@ -576,21 +579,25 @@ def check_chunk_llm_status(chunk_id):
 ## Key Features
 
 ### 1. **Queue Management**
+
 - Priority-based processing
 - Automatic retry with backoff
 - Worker status monitoring
 
 ### 2. **Performance Tracking**
+
 - Processing duration metrics
 - LLM call timing
 - Success/failure rates
 
 ### 3. **Error Handling**
+
 - Structured error messages
 - Retry logic with max attempts
 - Worker error recovery
 
 ### 4. **Scalability**
+
 - Single worker prevents overload
 - Queue can handle high volume
 - Easy to add worker monitoring
@@ -611,16 +618,19 @@ POST /llm/worker/restart     # Restart worker
 ## Worker Deployment Options
 
 ### 1. **Lambda-based Worker**
+
 - Triggered by CloudWatch Events
 - Auto-scaling based on queue depth
 - Cost-effective for variable load
 
 ### 2. **ECS/Container Worker**
+
 - Long-running worker process
 - Better for consistent load
 - Easier debugging and monitoring
 
 ### 3. **Hybrid Approach**
+
 - Primary worker in ECS
 - Lambda backup for overflow
 - Best of both worlds
@@ -818,31 +828,34 @@ def setup_default_providers():
 
 ## Enhanced Monitoring
 
-
-
 ## Missing Features Now Added
 
 ### ✅ **Multi-Worker Support**
+
 - Worker registration system
 - Load balancing across workers
 - Worker-specific capabilities
 
-### ✅ **LLM Provider Tracking** 
+### ✅ **LLM Provider Tracking**
+
 - Provider and model configuration tables
 - Request tracking by provider/model
 - Provider-specific rate limiting
 
 ### ✅ **Token Tracking**
+
 - Provider-specific token extraction
 - Cost estimation per request
 - Token usage analytics
 
 ### ✅ **Production Features**
+
 - Health checking for providers
 - Worker performance monitoring
 - Cost tracking and reporting
 - Auto-scaling trigger points#
-# Reasoning Mode Implementation
+
+## Reasoning Mode Implementation
 
 ### Provider-Specific Reasoning Support
 
@@ -1057,25 +1070,30 @@ GROUP BY llm_provider, reasoning_enabled;
 ## Additional Missing Features Added
 
 ### ✅ **Request Parameter Tracking**
+
 - `system_prompt` - Track system prompts used
 - `json_mode_enabled` - JSON response format requests
 - `top_p`, `frequency_penalty`, `presence_penalty` - Advanced sampling parameters
 
 ### ✅ **Provider Capability Matrix**
+
 - `supports_system_prompts` - System prompt support
 - `supports_json_mode` - Structured JSON responses
 - `supports_function_calling` - Function/tool calling
 
 ### ✅ **Model-Level Configuration**
+
 - `default_reasoning_mode` - Per-model reasoning preferences
 - Model-specific capability overrides
 
 ### ✅ **Smart Provider Selection**
+
 - Capability-based filtering (requires reasoning, JSON mode, etc.)
 - Automatic fallback when capabilities not supported
 - Warning when requested features unavailable
 
 This comprehensive tracking enables:
+
 - **Performance analysis** of reasoning vs non-reasoning requests
 - **Token usage optimization** by understanding reasoning impact
 - **Quality metrics** by operation and reasoning mode
@@ -1271,12 +1289,14 @@ def setup_prompt_templates():
 ### Core Principle: Pure Execution Only
 
 The LLM call flow now only does:
+
 1. **Receive pre-built prompts** (no template processing)
 2. **Call LLM API** (provider-specific implementation)
 3. **Save response** (raw + parsed)
 4. **Track tokens** (input/output only)
 
-### What's Removed:
+### What's Removed
+
 - ❌ Prompt template loading
 - ❌ Variable substitution  
 - ❌ Model selection logic
@@ -1284,12 +1304,13 @@ The LLM call flow now only does:
 - ❌ Cost calculation
 - ❌ Complex parameter validation
 
-### What's Added:
+### What's Added
+
 - ✅ Prompt versioning system
 - ✅ Prompt usage tracking
 - ✅ Clean separation of concerns
 
-### Integration Example:
+### Integration Example
 
 ```python
 # Business layer (sentence-split-flow)
@@ -1326,6 +1347,7 @@ def submit_llm_request(system_prompt, user_prompt, operation, llm_provider, llm_
 ```
 
 This creates **clean separation**:
+
 - **Business layer**: Decides what to do, builds prompts
 - **LLM layer**: Just executes the call
 - **Prompt layer**: Manages templates and versions## Token Lim
@@ -1420,7 +1442,8 @@ def process_chunk_with_llm(chunk_id, chunk_text):
 
 ## Simplified LLM Call Flow Responsibilities
 
-### ✅ What LLM Layer Does:
+### ✅ What LLM Layer Does
+
 - Accept pre-built prompts
 - Validate token limits against model
 - Call LLM API
@@ -1430,7 +1453,8 @@ def process_chunk_with_llm(chunk_id, chunk_text):
 - Handle retries
 - Update worker status
 
-### ❌ What LLM Layer Does NOT Do:
+### ❌ What LLM Layer Does NOT Do
+
 - Prompt template loading
 - Variable substitution
 - Model selection
@@ -1438,8 +1462,9 @@ def process_chunk_with_llm(chunk_id, chunk_text):
 - Business logic validation
 - Complex capability checking
 
-### 🔄 Clean Integration Pattern:
-```
+### 🔄 Clean Integration Pattern
+
+```text
 Business Flow → Prompt Processor → LLM Call Flow → LLM API
      ↑                                    ↓
      ←── Response Processing ←── Raw Response

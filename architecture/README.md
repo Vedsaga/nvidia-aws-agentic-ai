@@ -15,10 +15,12 @@ This directory contains the complete design documentation for our async microser
 ## Architecture Files
 
 ### Foundation
+
 - [`error-handling.md`](./error-handling.md) - Application-wide error tracking and tracing system
 - [`global-status-enum.md`](./global-status-enum.md) - Centralized status definitions
 
 ### User Flows
+
 - [`upload-flow.md`](./upload-flow.md) - Document upload with deduplication
 - [`validation-flow.md`](./validation-flow.md) - Document validation (TODO)
 - [`sentence-split-flow.md`](./sentence-split-flow.md) - Sentence splitting (TODO)
@@ -28,7 +30,7 @@ This directory contains the complete design documentation for our async microser
 ## Implementation Status
 
 | Flow | Status | File |
-|------|--------|------|
+| ------ | -------- | ------ |
 | Error Handling | ✅ Complete | `error-handling.md` |
 | Upload Flow | ✅ Complete | `upload-flow.md` |
 | Validation Flow | 🔄 TODO | `validation-flow.md` |
@@ -39,6 +41,7 @@ This directory contains the complete design documentation for our async microser
 ## Database Design
 
 Each user has their own SQLite database containing:
+
 - **documents** - Upload and document metadata
 - **sentences** - Sentence-level processing status
 - **request_traces** - End-to-end request tracking
