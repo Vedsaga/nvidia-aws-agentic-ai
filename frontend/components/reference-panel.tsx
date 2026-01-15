@@ -2,6 +2,7 @@
 import React from "react";
 import { X, GitBranch, ListTree } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import FrameGraph from "./frame-graph";
 import type { ReferenceData } from "@/lib/types";
 import { useSentenceChain } from "@/hooks/useSentenceChain";
 import { formatStatusLabel } from "@/lib/status";
@@ -43,9 +44,12 @@ export default function KnowledgeReferencePanel({ reference, onClose }: Knowledg
             <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
               <GitBranch className="h-4 w-4" /> Knowledge graph snippet
             </h3>
-            <pre className="mt-3 max-h-60 overflow-auto rounded bg-zinc-950/90 p-4 text-xs text-white">
-              {JSON.stringify(reference.kg_snippet, null, 2)}
-            </pre>
+            <div className="mt-3 h-[500px] w-full overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+              <FrameGraph
+                nodes={reference.kg_snippet?.nodes ?? []}
+                edges={reference.kg_snippet?.edges ?? []}
+              />
+            </div>
             <div className="mt-3 grid gap-3 text-xs text-muted-foreground">
               <div>
                 <strong className="font-medium text-foreground">Nodes:</strong>

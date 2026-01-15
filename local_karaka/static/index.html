@@ -13,13 +13,52 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <!-- D3.js for graph visualization -->
+    <!-- Force Graph library (better interaction/zoom/pan) -->
+    <script src="https://unpkg.com/force-graph"></script>
+    <!-- D3.js (still useful for other things or legacy) -->
     <script src="https://d3js.org/d3.v7.min.js"></script>
 
     <style>
-        /* ══════════════════════════════════════════════════════════
-           CSS VARIABLES - Premium Minimalist Theme (Dark Mode)
-           ══════════════════════════════════════════════════════════ */
+        /* ... existing styles ... */
+        /* Updated Graph Controls */
+        .graph-controls {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .control-btn {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--color-muted);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-sm);
+            color: var(--color-foreground);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .control-btn:hover {
+            background: var(--color-border);
+            color: white;
+        }
+
+        /* Force graph container needs relative positioning for overlay */
+        #graph-container {
+            position: relative;
+            background: var(--color-card);
+            /* Subtle grid pattern */
+            background-image: radial-gradient(var(--color-border) 1px, transparent 1px);
+            background-size: 20px 20px;
+        }
+
         :root {
             /* Dark Mode Base */
             --color-background: #111111;
@@ -44,11 +83,82 @@
 
             /* Typography */
             --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+            --glass-bg: rgba(24, 24, 24, 0.85);
+            --glass-border: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Inspector Panel */
+        .node-inspector {
+            position: absolute;
+            top: 1rem;
+            left: 1rem;
+            width: 280px;
+            max-height: calc(100% - 2rem);
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: var(--radius-lg);
+            padding: 1rem;
+            transform: translateX(-110%);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 20;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
+        }
+
+        .node-inspector.visible {
+            transform: translateX(0);
+        }
+
+        .inspector-header {
+            border-bottom: 1px solid var(--color-border);
+            padding-bottom: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .inspector-title {
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: var(--color-foreground);
+            margin-bottom: 0.25rem;
+        }
+
+        .inspector-subtitle {
+            font-size: 0.75rem;
+            color: var(--color-muted-foreground);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .inspector-content {
+            font-size: 0.8125rem;
+            color: var(--color-muted-foreground);
+        }
+
+        .prop-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .prop-key {
+            color: var(--color-muted-foreground);
+        }
+
+        .prop-val {
+            color: var(--color-foreground);
+            text-align: right;
+            max-width: 60%;
+            word-break: break-word;
         }
 
         /* ══════════════════════════════════════════════════════════
-           RESET & BASE
-           ══════════════════════════════════════════════════════════ */
+    RESET & BASE
+    ══════════════════════════════════════════════════════════ */
         *,
         *::before,
         *::after {
@@ -86,17 +196,21 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           LAYOUT
-           ══════════════════════════════════════════════════════════ */
+    LAYOUT
+    ══════════════════════════════════════════════════════════ */
         .app-container {
             display: grid;
             grid-template-columns: 1fr 1fr;
+            /* Equal split as requested */
             grid-template-rows: auto 1fr auto;
-            gap: 1rem;
-            min-height: 100vh;
+            gap: 1.5rem;
+            height: 100vh;
+            max-height: 100vh;
             padding: 1.5rem;
-            max-width: 1600px;
-            margin: 0 auto;
+            max-width: 100%;
+            margin: 0;
+            overflow: hidden;
+            /* Prevent body scroll */
         }
 
         header {
@@ -106,8 +220,10 @@
             align-items: center;
             padding-bottom: 1rem;
             border-bottom: 1px solid var(--color-border);
+            flex-shrink: 0;
         }
 
+        /* ... logo / header styles ... */
         .logo {
             display: flex;
             align-items: center;
@@ -168,9 +284,10 @@
             }
         }
 
+
         /* ══════════════════════════════════════════════════════════
-           PANELS
-           ══════════════════════════════════════════════════════════ */
+    PANELS
+    ══════════════════════════════════════════════════════════ */
         .panel {
             background: var(--color-card);
             border: 1px solid var(--color-border);
@@ -178,6 +295,8 @@
             overflow: hidden;
             display: flex;
             flex-direction: column;
+            flex-shrink: 0;
+            /* Prevent squashing */
         }
 
         .panel-header {
@@ -187,6 +306,7 @@
             padding: 1rem 1.25rem;
             border-bottom: 1px solid var(--color-border);
             background: var(--color-muted);
+            flex-shrink: 0;
         }
 
         .panel-title {
@@ -203,22 +323,49 @@
             overflow-y: auto;
         }
 
-        /* Left panels */
+        /* Left columns - scrollable area */
         .left-column {
             display: flex;
             flex-direction: column;
             gap: 1rem;
+            overflow-y: auto;
+            /* Independent scroll */
+            padding-right: 0.5rem;
+            /* Space for scrollbar */
+            height: 100%;
+            min-width: 0;
+            /* Prevent flex blowout */
         }
 
-        /* Right panel (graph) */
+        /* Custom Scrollbar for left column */
+        .left-column::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .left-column::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .left-column::-webkit-scrollbar-thumb {
+            background: var(--color-border);
+            border-radius: 4px;
+        }
+
+        .left-column::-webkit-scrollbar-thumb:hover {
+            background: var(--color-muted-foreground);
+        }
+
+        /* Right panel (graph) - fixed full height */
         .right-column {
             display: flex;
             flex-direction: column;
+            height: 100%;
+            overflow: hidden;
         }
 
         /* ══════════════════════════════════════════════════════════
-           INPUT PANEL
-           ══════════════════════════════════════════════════════════ */
+    INPUT PANEL
+    ══════════════════════════════════════════════════════════ */
         .input-panel .panel-content {
             display: flex;
             flex-direction: column;
@@ -294,8 +441,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           PROGRESS BAR
-           ══════════════════════════════════════════════════════════ */
+    PROGRESS BAR
+    ══════════════════════════════════════════════════════════ */
         .progress-container {
             display: none;
             flex-direction: column;
@@ -327,8 +474,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           Q&A PANEL
-           ══════════════════════════════════════════════════════════ */
+    Q&A PANEL
+    ══════════════════════════════════════════════════════════ */
         .qa-panel .panel-content {
             display: flex;
             flex-direction: column;
@@ -401,8 +548,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           FRAMES LIST
-           ══════════════════════════════════════════════════════════ */
+    FRAMES LIST
+    ══════════════════════════════════════════════════════════ */
         .frames-list {
             display: flex;
             flex-direction: column;
@@ -487,8 +634,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           GRAPH VISUALIZATION
-           ══════════════════════════════════════════════════════════ */
+    GRAPH VISUALIZATION
+    ══════════════════════════════════════════════════════════ */
         .graph-panel {
             flex: 1;
         }
@@ -572,8 +719,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           FOOTER
-           ══════════════════════════════════════════════════════════ */
+    FOOTER
+    ══════════════════════════════════════════════════════════ */
         footer {
             grid-column: 1 / -1;
             display: flex;
@@ -585,8 +732,8 @@
         }
 
         /* ══════════════════════════════════════════════════════════
-           RESPONSIVE
-           ══════════════════════════════════════════════════════════ */
+    RESPONSIVE
+    ══════════════════════════════════════════════════════════ */
         @media (max-width: 1024px) {
             .app-container {
                 grid-template-columns: 1fr;
@@ -985,10 +1132,12 @@ Dr. Williams received the Breakthrough Prize for her work on this project.`;
         // ══════════════════════════════════════════════════════════
         let simulation = null;
 
+        let graphInstance = null;
+
         function renderGraph() {
             const container = document.getElementById('graph-container');
-            container.innerHTML = '';
 
+            // Clear previous if empty
             if (!graphData.nodes || graphData.nodes.length === 0) {
                 container.innerHTML = `
                     <div class="empty-state" style="height: 100%;">
@@ -1000,107 +1149,252 @@ Dr. Williams received the Breakthrough Prize for her work on this project.`;
                         <p>Graph will appear here<br>after processing text.</p>
                     </div>
                 `;
+                graphInstance = null;
                 return;
             }
 
+            // If graph already exists, just update data
+            const formattedData = {
+                nodes: graphData.nodes,
+                links: graphData.edges
+            };
+
+            if (graphInstance) {
+                graphInstance.graphData(formattedData);
+                return;
+            }
+
+            // Clean container for fresh init
+            container.innerHTML = '';
+
+            // Add Inspector Panel
+            const inspector = document.createElement('div');
+            inspector.className = 'node-inspector';
+            inspector.id = 'nodeInspector';
+            inspector.innerHTML = `
+                <div class="inspector-header">
+                    <div class="inspector-title" id="inspectorTitle">Node Name</div>
+                    <div class="inspector-subtitle" id="inspectorType">Node Type</div>
+                </div>
+                <div class="inspector-content" id="inspectorContent"></div>
+            `;
+            container.appendChild(inspector);
+
+            // Add Controls
+            const controls = document.createElement('div');
+            controls.className = 'graph-controls';
+            controls.innerHTML = `
+                <button class="control-btn" onclick="zoomGraph(1.5)" title="Zoom In">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+                </button>
+                <button class="control-btn" onclick="zoomGraph(0.6)" title="Zoom Out">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+                </button>
+                <button class="control-btn" onclick="fitGraph()" title="Fit View">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>
+                </button>
+            `;
+            container.appendChild(controls);
+
+            // Initialize ForceGraph
             const width = container.clientWidth;
             const height = container.clientHeight || 500;
 
-            const svg = d3.select(container)
-                .append('svg')
-                .attr('width', width)
-                .attr('height', height);
+            // State for interactions
+            let highlightNodes = new Set();
+            let highlightLinks = new Set();
+            let hoverNode = null;
+            let selectedNode = null;
 
-            // Define arrow marker
-            svg.append('defs').append('marker')
-                .attr('id', 'arrowhead')
-                .attr('viewBox', '-0 -5 10 10')
-                .attr('refX', 25)
-                .attr('refY', 0)
-                .attr('orient', 'auto')
-                .attr('markerWidth', 6)
-                .attr('markerHeight', 6)
-                .append('path')
-                .attr('d', 'M 0,-5 L 10,0 L 0,5')
-                .attr('fill', '#333');
+            function updateHighlight() {
+                if (graphInstance) {
+                    // Trigger style updates
+                    graphInstance
+                        .nodeColor(graphInstance.nodeColor())
+                        .linkColor(graphInstance.linkColor())
+                        .linkWidth(graphInstance.linkWidth());
+                }
+            }
 
-            // Create simulation
-            simulation = d3.forceSimulation(graphData.nodes)
-                .force('link', d3.forceLink(graphData.edges)
-                    .id(d => d.id)
-                    .distance(120))
-                .force('charge', d3.forceManyBody().strength(-300))
-                .force('center', d3.forceCenter(width / 2, height / 2))
-                .force('collision', d3.forceCollide().radius(40));
+            // Colors matching styling logic
+            const getNodeColor = (node) => {
+                const t = (node.type || "").toLowerCase();
+                let color = "#9ca3af";
+                if (t.includes("agent") || t.includes("karta")) color = "#ef4444";
+                else if (t.includes("object") || t.includes("karma")) color = "#3b82f6";
+                else if (t.includes("action") || t.includes("verb") || t.includes("event")) color = "#eab308";
+                else if (t.includes("recipient")) color = "#a855f7";
+                else if (t.includes("source")) color = "#ec4899";
+                else if (t.includes("location") || t.includes("time")) color = "#10b981";
 
-            // Create links
-            const link = svg.append('g')
-                .selectAll('line')
-                .data(graphData.edges)
-                .join('line')
-                .attr('class', 'graph-link')
-                .attr('marker-end', 'url(#arrowhead)');
+                // Dimming Logic
+                if (hoverNode && !highlightNodes.has(node.id)) {
+                    return `rgba(80, 80, 80, 0.2)`; // Dimmed
+                }
+                return color;
+            };
 
-            // Create link labels
-            const linkLabel = svg.append('g')
-                .selectAll('text')
-                .data(graphData.edges)
-                .join('text')
-                .attr('class', 'graph-link-label')
-                .attr('text-anchor', 'middle')
-                .text(d => d.label);
+            const getLinkColor = (link) => {
+                if (hoverNode && !highlightLinks.has(link)) {
+                    return 'rgba(50, 50, 50, 0.1)';
+                }
+                return '#52525b';
+            };
 
-            // Create nodes
-            const node = svg.append('g')
-                .selectAll('g')
-                .data(graphData.nodes)
-                .join('g')
-                .attr('class', d => `graph-node ${d.type}`)
-                .call(d3.drag()
-                    .on('start', dragstarted)
-                    .on('drag', dragged)
-                    .on('end', dragended));
+            graphInstance = ForceGraph()(container)
+                .width(width)
+                .height(height)
+                .graphData(formattedData)
+                .backgroundColor('rgba(0,0,0,0)')
+                .nodeId('id')
+                .nodeLabel('label')
+                .nodeColor(getNodeColor)
+                .nodeRelSize(node => node.type === 'event' ? 6 : 4)
+                .linkDirectionalArrowLength(3.5)
+                .linkDirectionalArrowRelPos(1)
+                .linkWidth(link => highlightLinks.has(link) ? 2.5 : 1.5)
+                .linkColor(getLinkColor)
+                .onNodeHover(node => {
+                    // No hover effect if we have a selected node (lock mode)
+                    if (selectedNode) return;
 
-            node.append('circle')
-                .attr('r', d => d.type === 'event' ? 20 : 15);
+                    const elem = document.getElementById('graph-container');
+                    elem.style.cursor = node ? 'pointer' : null;
 
-            node.append('text')
-                .attr('dy', d => d.type === 'event' ? 4 : 3)
-                .attr('text-anchor', 'middle')
-                .text(d => d.label.length > 10 ? d.label.slice(0, 10) + '…' : d.label);
+                    hoverNode = node || null;
+                    highlightNodes.clear();
+                    highlightLinks.clear();
 
-            // Update positions
-            simulation.on('tick', () => {
-                link
-                    .attr('x1', d => d.source.x)
-                    .attr('y1', d => d.source.y)
-                    .attr('x2', d => d.target.x)
-                    .attr('y2', d => d.target.y);
+                    if (node) {
+                        highlightNodes.add(node.id);
+                        // Find neighbors
+                        formattedData.links.forEach(link => {
+                            if (link.source.id === node.id || link.target.id === node.id) {
+                                highlightLinks.add(link);
+                                highlightNodes.add(link.source.id);
+                                highlightNodes.add(link.target.id);
+                            }
+                        });
+                    }
+                    updateHighlight();
+                })
+                .onNodeClick(node => {
+                    // Toggle selection
+                    if (selectedNode === node) {
+                        selectedNode = null; // Deselect
+                        document.getElementById('nodeInspector').classList.remove('visible');
+                    } else {
+                        selectedNode = node;
+                        hoverNode = node; // Lock hover state
 
-                linkLabel
-                    .attr('x', d => (d.source.x + d.target.x) / 2)
-                    .attr('y', d => (d.source.y + d.target.y) / 2);
+                        // Center camera
+                        graphInstance.centerAt(node.x, node.y, 1000);
+                        graphInstance.zoom(2.5, 1000); // Auto zoom in
 
-                node.attr('transform', d => `translate(${d.x},${d.y})`);
+                        // Populate Inspector
+                        const title = document.getElementById('inspectorTitle');
+                        const type = document.getElementById('inspectorType');
+                        const content = document.getElementById('inspectorContent');
+                        const inspector = document.getElementById('nodeInspector');
+
+                        title.textContent = node.label;
+                        type.textContent = node.type || 'Unknown Entity';
+
+                        // Generate property rows
+                        let html = '';
+                        Object.entries(node).forEach(([k, v]) => {
+                            if (['id', 'label', 'type', 'x', 'y', 'vx', 'vy', 'fx', 'fy', 'index', '__bckgDimensions'].includes(k)) return;
+                            if (typeof v === 'object') return; // skip complex objects for now
+                            html += `<div class="prop-row"><span class="prop-key">${k}</span><span class="prop-val">${v}</span></div>`;
+                        });
+
+                        // Fake some data if empty (for demo visuals)
+                        if (html === '') {
+                            html += `<div class="prop-row"><span class="prop-key">ID</span><span class="prop-val">${node.id}</span></div>`;
+                            html += `<div class="prop-row"><span class="prop-key">Connections</span><span class="prop-val">${highlightLinks.size}</span></div>`;
+                        }
+
+                        content.innerHTML = html;
+                        inspector.classList.add('visible');
+                    }
+                })
+                .onBackgroundClick(() => {
+                    selectedNode = null;
+                    hoverNode = null;
+                    highlightNodes.clear();
+                    highlightLinks.clear();
+                    document.getElementById('nodeInspector').classList.remove('visible');
+                    updateHighlight();
+                })
+                .nodeCanvasObject((node, ctx, globalScale) => {
+                    const label = node.label || node.id;
+                    const fontSize = 12 / globalScale;
+                    ctx.font = `${fontSize}px Sans-Serif`;
+
+                    // Draw node circle
+                    ctx.beginPath();
+                    const r = node.type === 'event' ? 6 : 4;
+                    ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
+                    ctx.fillStyle = getNodeColor(node);
+                    ctx.fill();
+
+                    // Highlight Ring for Selection
+                    if (node === selectedNode || node === hoverNode) {
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                        ctx.lineWidth = 2 / globalScale;
+                        ctx.stroke();
+
+                        // Glow
+                        ctx.shadowColor = ctx.fillStyle;
+                        ctx.shadowBlur = 15;
+                    } else {
+                        ctx.shadowBlur = 0;
+                    }
+
+                    // Reset stroke for events if not highlighted
+                    if (node.type === 'event' && node !== selectedNode && node !== hoverNode) {
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 0.5 / globalScale;
+                        ctx.stroke();
+                    }
+
+                    // Only draw labels for important nodes or when hovered/selected
+                    // to reduce clutter, OR draw all if zoomed in
+                    if (globalScale > 1.5 || highlightNodes.has(node.id) || node.type === 'event') {
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'top';
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+                        ctx.fillText(label, node.x, node.y + r + 2);
+                    }
+
+                    node.__bckgDimensions = [r, r];
+                })
+                .onNodeDragEnd(node => {
+                    node.fx = node.x;
+                    node.fy = node.y;
+                });
+
+            // Handle resize
+            const resizeObserver = new ResizeObserver(entries => {
+                for (let entry of entries) {
+                    const { width, height } = entry.contentRect;
+                    if (graphInstance) graphInstance.width(width).height(height);
+                }
             });
-
-            function dragstarted(event, d) {
-                if (!event.active) simulation.alphaTarget(0.3).restart();
-                d.fx = d.x;
-                d.fy = d.y;
-            }
-
-            function dragged(event, d) {
-                d.fx = event.x;
-                d.fy = event.y;
-            }
-
-            function dragended(event, d) {
-                if (!event.active) simulation.alphaTarget(0);
-                d.fx = null;
-                d.fy = null;
-            }
+            resizeObserver.observe(container);
         }
+
+        // Exposed Control Functions
+        window.zoomGraph = (factor) => {
+            if (graphInstance) {
+                const currentZoom = graphInstance.zoom();
+                graphInstance.zoom(currentZoom * factor, 400);
+            }
+        };
+
+        window.fitGraph = () => {
+            if (graphInstance) graphInstance.zoomToFit(400, 20);
+        };
 
         // ══════════════════════════════════════════════════════════
         // EVENT LISTENERS
