@@ -633,14 +633,22 @@
                     <textarea id="inputText"
                         placeholder="Enter your text here...&#10;&#10;Example: The European Research Council funded the study in 2022. Dr. Smith conducted the experiments in Berlin using advanced microscopy."></textarea>
                     <div class="button-row">
-                        <button class="btn-secondary" id="loadDemoBtn"
+                        <button class="btn-secondary" id="loadDemoBtn" style="margin-right: 0.5rem;"
                             title="Load pre-extracted demo frames (no API calls)">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2">
                                 <path d="M12 2L12 14M12 14L7 9M12 14L17 9" />
                                 <path d="M2 17L2 20C2 21.1 2.9 22 4 22L20 22C21.1 22 22 21.1 22 20L22 17" />
                             </svg>
-                            Load Demo
+                            Demo
+                        </button>
+                        <button class="btn-secondary" id="loadStressBtn"
+                            title="Load complex causal chains for reasoning stress test">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2">
+                                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+                            </svg>
+                            Stress Test
                         </button>
                         <button class="btn-primary" id="processBtn">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -737,6 +745,7 @@
         const inputText = document.getElementById('inputText');
         const processBtn = document.getElementById('processBtn');
         const loadDemoBtn = document.getElementById('loadDemoBtn');
+        const loadStressBtn = document.getElementById('loadStressBtn');
         const clearBtn = document.getElementById('clearBtn');
         const progressContainer = document.getElementById('progressContainer');
         const progressFill = document.getElementById('progressFill');
@@ -887,6 +896,29 @@
 The study was conducted in Copenhagen using advanced imaging tools.
 Dr. Chen led the research on neuroplasticity.
 The team published the results in Nature in 2023.`;
+            }
+        }
+
+        function loadStressTest() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                frames = [];
+                progressContainer.classList.add('visible');
+                progressText.textContent = 'Loading stress test frames...';
+                progressFill.style.width = '50%';
+
+                ws.send(JSON.stringify({ type: 'load_stress_test' }));
+
+                // Update textarea with stress test text
+                inputText.value = `In 2019, Professor Sharma discovered a novel protein marker in Mumbai.
+This discovery led to a collaboration between IIT Delhi and Stanford University.
+Dr. Williams from Stanford analyzed the protein using CRISPR technology.
+The analysis revealed that the protein could inhibit cancer cell growth.
+In 2021, the team received $5 million funding from the NIH.
+The funding enabled them to conduct clinical trials in three countries.
+By 2023, the drug had reduced tumor size by 60% in treated patients.
+Professor Sharma attributed the success to the collaborative approach.
+The FDA approved the drug for Phase 3 trials in December 2023.
+Dr. Williams received the Breakthrough Prize for her work on this project.`;
             }
         }
 
@@ -1075,6 +1107,7 @@ The team published the results in Nature in 2023.`;
         // ══════════════════════════════════════════════════════════
         processBtn.addEventListener('click', processText);
         loadDemoBtn.addEventListener('click', loadDemo);
+        loadStressBtn.addEventListener('click', loadStressTest);
         clearBtn.addEventListener('click', clearAll);
         askBtn.addEventListener('click', askQuestion);
 

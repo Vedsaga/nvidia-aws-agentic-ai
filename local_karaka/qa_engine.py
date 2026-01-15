@@ -1,296 +1,295 @@
 """
 QA Engine for Kāraka Frame Graph POC.
-
-This module implements a schema-aware Q&A system that translates natural language
-questions into frame traversal operations. The LLM is taught the Kāraka semantic
-framework and can reason about event frames to answer questions.
-
-Key Insight: We don't do keyword matching or traditional RAG. Instead, we teach
-the LLM our semantic schema and let it reason about structured event data.
+Implements a 2-Phase RAG Pipeline:
+1. Query Planning: NLP -> Search Filters
+2. Answer Synthesis: Filtered Frames -> Answer
 """
 
 import json
-from dataclasses import dataclass
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from llm_client import call_llm
 from frame_store import FrameStore, get_store
 from frame_extractor import Frame
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
-# SCHEMA-AWARE Q&A PROMPT
+# PHASE 1: QUERY PLANNING PROMPT
 # ═══════════════════════════════════════════════════════════════════════════════
-# This prompt teaches the LLM:
-# 1. What Kāraka roles mean (Pāṇinian semantics)
-# 2. How our frame database is structured
-# 3. How to translate questions into frame traversal logic
-# 4. How to generate accurate answers from frames
+QUERY_PLANNER_PROMPT = """You are a Search Query Generator for a Kāraka Frame Database.
+Your job is to convert a natural language question into key terms to search the database.
 
-SCHEMA_AWARE_QA_PROMPT = """You are a Question-Answering system for a Kāraka Frame Graph database.
+Database Info:
+- Contains event frames (actions)
+- Fields: Kriyā (verb), Kartā (agent), Karma (object), etc.
 
-## THE PĀṆINIAN INSIGHT
+Refining Rules:
+1. Identify the core action (Kriyā) in the question. Include the root and synonyms.
+2. Identify any specific entities (names, places, dates) mentioned.
+3. Ignore stop words (the, a, is).
 
-You are using a 2500-year-old Sanskrit grammar system that SYSTEMATICALLY maps ALL question types 
-to semantic roles. This is not pattern matching - it's a complete theory of interrogatives.
-
-## INTERROGATIVE → KĀRAKA MAPPING (Vibhakti System)
-
-Every question word in any language maps to a specific Kāraka role:
-
-| Question Word | Case (Vibhakti) | Kāraka Role | What to Find |
-|---------------|-----------------|-------------|--------------|
-| **Who?** (subject) | प्रथमा (Nominative) | **Kartā** | The agent who performed the action |
-| **Whom?** (object) | द्वितीया (Accusative) | **Karma** | The thing acted upon |
-| **What?** (subject) | प्रथमा | **Kartā** | Inanimate agent |
-| **What?** (object) | द्वितीया | **Karma** | The thing acted upon |
-| **What did X do?** | - | **Kriyā + Karma** | The action and its object |
-| **By what? How?** | तृतीया (Instrumental) | **Karaṇa** | The instrument/means used |
-| **To/For whom?** | चतुर्थी (Dative) | **Sampradāna** | The recipient/beneficiary |
-| **From where?** | पञ्चमी (Ablative) | **Apādāna** | The source/origin |
-| **Whose?** | षष्ठी (Genitive) | *(possession)* | Owner/possessor |
-| **Where?** | सप्तमी (Locative) | **Locus_Space** | Physical location |
-| **When?** | सप्तमी (Locative) | **Locus_Time** | Temporal location |
-| **About what?** | सप्तमी (Locative) | **Locus_Topic** | Subject matter |
-
-## WHAT IS A KĀRAKA FRAME?
-
-Each frame represents ONE EVENT (action/verb) with its semantic participants:
-
-```
-FRAME: {
-  frame_id: "F0",
-  kriya: "fund",              // The action/verb
-  Kartā: "ERC",               // WHO did it (agent)
-  Karma: "the study",         // WHAT was acted upon (object)
-  Karaṇa: null,               // BY WHAT means (instrument)
-  Sampradāna: null,           // TO WHOM (recipient)
-  Apādāna: null,              // FROM WHERE (source)
-  Locus_Space: null,          // WHERE it happened
-  Locus_Time: "2022",         // WHEN it happened
-  Locus_Topic: null           // ABOUT WHAT topic
+Example 1:
+Question: "Who discovered a protein in Mumbai?"
+Output:
+{
+  "kriya_keywords": ["discover", "find", "locate"],
+  "entity_keywords": ["protein", "Mumbai"],
+  "reasoning": "Searching for discovery events involving protein or Mumbai"
 }
-```
 
-## PASSIVE VOICE: CRITICAL INSIGHT
+Example 2:
+Question: "What did the ERC fund?"
+Output:
+{
+  "kriya_keywords": ["fund", "grant", "support"],
+  "entity_keywords": ["ERC", "European Research Council"],
+  "reasoning": "Searching for funding actions by ERC"
+}
 
-In passive voice ("The study was conducted"):
-- The **grammatical subject** ("The study") is the **Karma** (object), NOT Kartā
-- The **agent** may be in a "by" phrase, OR may be **NULL** (unstated)
-- A **NULL Kartā is valid** - it means "done by unspecified agent"
+Respond ONLY with JSON.
+"""
 
-Example:
-- "The study was conducted in Copenhagen"
-- Kriyā = "conduct", Karma = "The study", Kartā = NULL, Locus_Space = "Copenhagen"
-- Question: "Who conducted the study?" → Answer: "The agent is not explicitly stated (passive voice)"
+# ═══════════════════════════════════════════════════════════════════════════════
+# PHASE 2: ANSWER SYNTHESIS PROMPT (Schema-Aware)
+# ═══════════════════════════════════════════════════════════════════════════════
+ANSWER_SYNTHESIS_PROMPT = """You are a Question-Answering system for a Kāraka Frame Graph database.
 
-## YOUR REASONING PROCESS
+## PĀṆINIAN SEMANTICS & INTERROGATIVES
+Systematically map the question to Kāraka roles:
 
-When answering a question:
+| Question | Role to Find |
+|---|---|
+| Who? (Agent) | **Kartā** |
+| Whom/What? (Object) | **Karma** |
+| By what? (Instrument) | **Karaṇa** |
+| To whom? (Recipient) | **Sampradāna** |
+| From where? | **Apādāna** |
+| Where? | **Locus_Space** |
+| When? | **Locus_Time** |
 
-1. **IDENTIFY THE INTERROGATIVE TYPE**
-   - What question word is used? (who/what/where/when/how/why)
-   - Map it to the corresponding Kāraka role using the table above
+## FRAME STRUCTURE
+Each frame is an EVENT.
+- Passive voice: Grammatical subject = Karma. Agent = Kartā (or NULL).
+- NULL Kartā means "Agent unstated".
 
-2. **IDENTIFY CONSTRAINTS**
-   - What entity or action is mentioned that helps locate the right frame?
-   - Example: "funded the study" → find frame with Kriyā containing "fund"
-
-3. **LOCATE THE FRAME**
-   - Find the frame(s) that match the constraints
-
-4. **EXTRACT THE ANSWER**
-   - Return the value of the mapped Kāraka role from that frame
-   - If the role is NULL, explain why (often passive voice)
+## YOUR TASK
+1. Read the user question.
+2. Analyze the RELEVANT FRAMES provided (these were retrieved by a search engine).
+3. Extract the answer based on the role mapping.
 
 ## OUTPUT FORMAT
-
-Respond with JSON:
 ```json
 {
-  "interrogative_type": "who/what/where/when/how/why",
-  "mapped_karaka": "The Kāraka role you're looking for",
-  "reasoning": "How you identified the frame and extracted the answer",
+  "interrogative_type": "who/what/where/when...",
+  "mapped_karaka": "Kartā/Karma...",
+  "reasoning": "Chain of thought...",
   "matched_frame_ids": ["F0"],
-  "answer": "Natural language answer using ONLY frame data",
+  "answer": "Natural language answer...",
   "confidence": "high/medium/low"
 }
 ```
-
-## CRITICAL RULES
-
-1. ONLY use information from the provided frames
-2. If a role is NULL, say so explicitly and explain (passive voice, unstated, etc.)
-3. If no frame matches, say "This information is not in the extracted events"
-4. Always cite which frame(s) you used
 """
 
+async def plan_query(question: str) -> Dict[str, Any]:
+    """Phase 1: Generate search filters from question."""
+    prompt = f"{QUERY_PLANNER_PROMPT}\n\nQuestion: \"{question}\"\n"
+    
+    try:
+        response = await call_llm(prompt, "Generte JSON query plan", temperature=0.1, json_mode=True)
+        # Parse JSON
+        start = response.find("{")
+        end = response.rfind("}") + 1
+        data = json.loads(response[start:end])
+        return data
+    except Exception as e:
+        print(f"⚠️ Query planning failed: {e}")
+        # Fallback: simple keyword search on the question itself
+        return {
+            "kriya_keywords": [],
+            "entity_keywords": [w for w in question.split() if len(w) > 3],
+            "reasoning": "Fallback keyword search"
+        }
+
+def search_frames(store: FrameStore, plan: Dict[str, Any]) -> List[Frame]:
+    """Phase 2: Filter frames based on plan + Graph Expansion."""
+    all_frames = store.get_all_frames()
+    
+    kriyas = [k.lower() for k in plan.get("kriya_keywords", [])]
+    entities = [e.lower() for e in plan.get("entity_keywords", [])]
+    
+    if not kriyas and not entities:
+        return all_frames # Return all if no specific filter
+        
+    # 1. Direct Search (Keyword/Vector phase)
+    hits = []
+    
+    for f in all_frames:
+        score = 0
+        
+        # Check Kriyā (Verb)
+        if f.kriya and any(k in f.kriya.lower() for k in kriyas):
+            score += 3
+        if f.kriya_surface and any(k in f.kriya_surface.lower() for k in kriyas):
+            score += 3
+            
+        # Check Content (Entities)
+        frame_text = f.sentence_text.lower()
+        # Also check specific roles values
+        role_values = " ".join([
+            str(v) for k, v in f.__dict__.items() 
+            if k in ['karta', 'karma', 'locus_space', 'locus_time', 'sampradana'] and v
+        ]).lower()
+        
+        for entity in entities:
+            if entity in frame_text or entity in role_values:
+                score += 2
+                
+        if score > 0:
+            hits.append((score, f))
+            
+    # Sort by score and take top matches
+    hits.sort(key=lambda x: x[0], reverse=True)
+    direct_matches = [h[1] for h in hits] # Take top 10 or threshold
+    
+    # 2. Graph Expansion (The "Hop")
+    # Retrieve neighbors connected via causal_links to bridge reasoning gaps
+    expanded_pool = {f.frame_id: f for f in direct_matches}
+    
+    for frame in direct_matches:
+        if not frame.causal_links:
+            continue
+            
+        for link in frame.causal_links:
+            # Check for cause_frame (parent) and effect_frame (child)
+            # We expand in BOTH directions to find context
+            neighbor_ids = []
+            if link.get("cause_frame"): neighbor_ids.append(link.get("cause_frame"))
+            if link.get("effect_frame"): neighbor_ids.append(link.get("effect_frame"))
+            
+            for nid in neighbor_ids:
+                if nid and nid not in expanded_pool:
+                    neighbor = store.get_frame(nid)
+                    if neighbor:
+                        expanded_pool[nid] = neighbor
+                        print(f"     🔗 Graph Hop: Expanded from {frame.frame_id} to {nid}")
+
+    return list(expanded_pool.values())
 
 async def ask(question: str, store: Optional[FrameStore] = None) -> dict:
     """
-    Main Q&A entry point - Schema-Aware Approach.
-    
-    This function:
-    1. Retrieves all frames from the store
-    2. Sends a comprehensive prompt teaching the LLM our Kāraka schema
-    3. Lets the LLM reason about the question and frames
-    4. Returns a structured answer
-    
-    Args:
-        question: User's natural language question
-        store: Optional frame store (uses global if not provided)
-    
-    Returns:
-        {
-            "question": original question,
-            "answer": generated answer,
-            "reasoning": LLM's reasoning about the query,
-            "matched_frames": frame IDs used,
-            "sources": full frame data,
-            "frame_count": number of total frames,
-            "confidence": answer confidence level
-        }
+    Main Q&A Entry Point: 2-Phase Pipeline.
     """
     store = store or get_store()
     all_frames = store.get_all_frames()
     
     print(f"\n❓ Question: {question}")
-    print(f"  📊 Frame store contains {len(all_frames)} frames")
+    print(f"  📊 Total DB: {len(all_frames)} frames")
     
     if not all_frames:
-        return {
-            "question": question,
-            "answer": "No events have been extracted yet. Please process a document first by entering text and clicking 'Process Text', or click 'Load Demo' to load pre-extracted frames.",
-            "reasoning": "No frames in database",
-            "matched_frames": [],
-            "sources": [],
-            "frame_count": 0,
-            "confidence": "none"
-        }
+        return _empty_response(question)
+
+    import time
+    start_total = time.perf_counter()
+
+    # ─────────────────────────────────────────────────────
+    # PHASE 1: PLAN QUERY
+    # ─────────────────────────────────────────────────────
+    t0 = time.perf_counter()
+    print("  🧠 Phase 1: Planning Query...")
+    plan = await plan_query(question)
+    t1 = time.perf_counter()
+    print(f"     ⏱️ Planning took {t1-t0:.2f}s")
+    print(f"     Target Kriya: {plan.get('kriya_keywords')}")
+    print(f"     Target Entities: {plan.get('entity_keywords')}")
     
     # ─────────────────────────────────────────────────────
-    # Build frame context for the LLM
+    # PHASE 2: SEARCH / RETRIEVE
     # ─────────────────────────────────────────────────────
+    t2 = time.perf_counter()
+    print("  🔍 Phase 2: Searching Graph...")
+    relevant_frames = search_frames(store, plan)
+    t3 = time.perf_counter()
+    print(f"     ⏱️ Search took {t3-t2:.4f}s")
+    print(f"     Found {len(relevant_frames)} relevant frames.")
+    
+    if not relevant_frames:
+        print("     ⚠️ No direct matches found. Using all frames as fallback.")
+        relevant_frames = all_frames
+    
+    # ─────────────────────────────────────────────────────
+    # PHASE 3: SYNTHESIZE ANSWER
+    # ─────────────────────────────────────────────────────
+    t4 = time.perf_counter()
+    print("  🤖 Phase 3: Synthesizing Answer...")
+    
+    # Prepare Context (Only Relevant Frames)
     frame_descriptions = []
-    for f in all_frames:
-        frame_dict = {
-            "frame_id": f.frame_id,
-            "kriya": f.kriya,
-            "original_sentence": f.sentence_text,
-            "roles": {}
-        }
-        
-        if f.karta: frame_dict["roles"]["Kartā (Agent)"] = f.karta
-        if f.karma: frame_dict["roles"]["Karma (Object)"] = f.karma
-        if f.karana: frame_dict["roles"]["Karaṇa (Instrument)"] = f.karana
-        if f.sampradana: frame_dict["roles"]["Sampradāna (Recipient)"] = f.sampradana
-        if f.apadana: frame_dict["roles"]["Apādāna (Source)"] = f.apadana
-        if f.locus_time: frame_dict["roles"]["Locus_Time"] = f.locus_time
-        if f.locus_space: frame_dict["roles"]["Locus_Space"] = f.locus_space
-        if f.locus_topic: frame_dict["roles"]["Locus_Topic"] = f.locus_topic
-        
-        # Note if any expected roles are null (helpful for passive voice)
-        if not f.karta:
-            frame_dict["roles"]["Kartā (Agent)"] = "NULL (not explicitly stated - likely passive voice)"
-        
+    for f in relevant_frames:
+        frame_dict = f.to_display()
+        # Add original sentence for context
+        frame_dict["original_sentence"] = f.sentence_text 
         frame_descriptions.append(frame_dict)
-    
-    # Build the full context
+        
     context = f"""## USER QUESTION
 {question}
 
-## AVAILABLE FRAMES (from extracted events)
+## RETRIEVED FRAMES (Search Results)
 {json.dumps(frame_descriptions, indent=2)}
 
-## YOUR TASK
-Analyze the question, find relevant frames, and provide an answer using ONLY the frame data above."""
+## INSTRUCTIONS
+Answer the question using ONLY the Retrieved Frames. 
+If the answer is found, map it to the Pāṇinian role.
+"""
 
     try:
-        # Call LLM with schema-aware prompt
         response = await call_llm(
-            SCHEMA_AWARE_QA_PROMPT,
+            ANSWER_SYNTHESIS_PROMPT,
             context,
-            temperature=0.1  # Low temperature for factual accuracy
+            temperature=0.1
         )
+        t5 = time.perf_counter()
+        print(f"     ⏱️ Synthesis took {t5-t4:.2f}s")
+        print(f"     ⏱️ TOTAL Q&A Latency: {t5-start_total:.2f}s")
         
-        # Parse JSON response
-        response_text = response.strip()
-        
-        # Try to extract JSON from response
-        try:
-            # Look for JSON block
-            if "{" in response_text:
-                json_start = response_text.find("{")
-                json_end = response_text.rfind("}") + 1
-                json_str = response_text[json_start:json_end]
-                data = json.loads(json_str)
-            else:
-                # No JSON found, treat entire response as answer
-                data = {
-                    "reasoning": "Direct answer",
-                    "matched_frames": [],
-                    "answer": response_text,
-                    "confidence": "medium"
-                }
-        except json.JSONDecodeError:
-            data = {
-                "reasoning": "Response parsing",
-                "matched_frames": [],
-                "answer": response_text,
-                "confidence": "medium"
-            }
-        
-        answer = data.get("answer", response_text)
-        reasoning = data.get("reasoning", "")
-        # Handle both field names for compatibility
-        matched_frames = data.get("matched_frame_ids", data.get("matched_frames", []))
-        confidence = data.get("confidence", "medium")
-        interrogative_type = data.get("interrogative_type", "")
-        mapped_karaka = data.get("mapped_karaka", "")
-        
-        print(f"  🔍 Interrogative: {interrogative_type} → Kāraka: {mapped_karaka}")
-        print(f"  💭 Reasoning: {reasoning}")
-        print(f"  📎 Matched frames: {matched_frames}")
-        print(f"  ✅ Answer: {answer}")
-        
-        # Get source frames for the matched IDs
-        sources = []
-        for frame in all_frames:
-            if frame.frame_id in matched_frames:
-                sources.append(frame.to_display())
-        
-        # If no specific frames matched, include all as context
-        if not sources:
-            sources = [f.to_display() for f in all_frames]
+        # Parse Response (Reuse existing clean logic)
+        data = _parse_llm_json(response)
         
         return {
             "question": question,
-            "answer": answer,
-            "reasoning": reasoning,
-            "matched_frames": matched_frames,
-            "sources": sources,
-            "frame_count": len(all_frames),
-            "confidence": confidence
+            "answer": data.get("answer", response),
+            "reasoning": data.get("reasoning", ""),
+            "matched_frames": data.get("matched_frame_ids", []),
+            "mapped_karaka": data.get("mapped_karaka", ""),
+            "interrogative_type": data.get("interrogative_type", ""),
+            "confidence": data.get("confidence", "medium"),
+            "sources": [f.to_display() for f in relevant_frames if f.frame_id in data.get("matched_frame_ids", [])],
+            "frame_count": len(all_frames)
         }
         
     except Exception as e:
-        print(f"  ⚠️ LLM Q&A failed: {e}")
-        
-        # Graceful fallback - list what we have
-        frame_summary = []
-        for f in all_frames:
-            if f.karta:
-                frame_summary.append(f"• {f.karta} → {f.kriya}" + (f" → {f.karma}" if f.karma else ""))
-            else:
-                frame_summary.append(f"• {f.kriya} (passive)" + (f" on {f.karma}" if f.karma else ""))
-        
-        fallback_answer = f"I have {len(all_frames)} extracted events:\n" + "\n".join(frame_summary) + f"\n\nPlease rephrase your question. (Error: {str(e)[:50]})"
-        
-        return {
-            "question": question,
-            "answer": fallback_answer,
-            "reasoning": f"LLM call failed: {e}",
-            "matched_frames": [],
-            "sources": [f.to_display() for f in all_frames],
-            "frame_count": len(all_frames),
-            "confidence": "low"
-        }
+        print(f"  ❌ QA Error: {e}")
+        return _error_response(question, str(e))
+
+def _parse_llm_json(text):
+    try:
+        if "{" in text:
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            return json.loads(text[start:end])
+        return {"answer": text}
+    except:
+        return {"answer": text}
+
+def _empty_response(q):
+    return {
+        "question": q, 
+        "answer": "No frames loaded.", 
+        "sources": [], 
+        "frame_count": 0
+    }
+
+def _error_response(q, err):
+    return {
+        "question": q, 
+        "answer": f"Error: {err}", 
+        "sources": [], 
+        "frame_count": 0
+    }

@@ -72,6 +72,7 @@ async def call_llm(
         "model": used_model,
         "messages": messages,
         "temperature": temperature,
+        "timeout": 30.0,
     }
     
     # Don't use response_format as many free models don't support it

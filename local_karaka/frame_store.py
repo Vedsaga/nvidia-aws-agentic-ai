@@ -23,6 +23,7 @@ class FrameStore:
             persist_path: Optional path to JSON file for persistence
         """
         self.frames: dict[str, Frame] = {}
+        self.vectors: dict[str, list[float]] = {}  # Mock vector store: frame_id -> embedding
         self.entities: dict[str, set[str]] = {}  # entity -> frame_ids
         self.kriyas: dict[str, set[str]] = {}    # kriya -> frame_ids
         self.persist_path = Path(persist_path) if persist_path else None
@@ -31,9 +32,37 @@ class FrameStore:
         if self.persist_path and self.persist_path.exists():
             self._load()
     
+    def _compute_canonical_text(self, frame: Frame) -> str:
+        """
+        Create a Standardized Event String for embedding.
+        Strategy: Agent + Verb + Object (Active Voice construction)
+        Benefits: Maps passive/active variations to the same vector space.
+        """
+        # Start with the Verb (Kriyā) - the core of the event
+        text = f"{frame.kriya}"
+        
+        # Add Agent (Kartā)
+        if frame.karta:
+            text = f"{frame.karta} {text}"
+            
+        # Add Object (Karma)
+        if frame.karma:
+            text = f"{text} {frame.karma}"
+            
+        # Add Instrument/Locus for context
+        if frame.karana: text += f" using {frame.karana}"
+        if frame.locus_topic: text += f" about {frame.locus_topic}"
+        
+        return text
+
     def add_frame(self, frame: Frame) -> None:
         """Add a frame to the store."""
         self.frames[frame.frame_id] = frame
+        
+        # Compute "Canonical Event Embedding"
+        # In a real deployment, call: client.embeddings.create(input=self._compute_canonical_text(frame))
+        # Here we mock it or store the text for now
+        self.vectors[frame.frame_id] = [0.0] * 384 # Placeholder 384-dim vector
         
         # Index by kriya (lowercase for consistent matching)
         kriya_key = frame.kriya.lower().strip()

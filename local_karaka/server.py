@@ -43,6 +43,7 @@ def load_demo_frames():
                     locus_time=item.get("locus_time"),
                     locus_space=item.get("locus_space"),
                     locus_topic=item.get("locus_topic"),
+                    causal_links=item.get("causal_links"),
                 )
                 frames.append(frame)
             return frames
@@ -75,6 +76,7 @@ def load_stress_test_frames():
                     locus_time=item.get("locus_time"),
                     locus_space=item.get("locus_space"),
                     locus_topic=item.get("locus_topic"),
+                    causal_links=item.get("causal_links"),
                 )
                 frames.append(frame)
             print(f"✨ Loaded {len(frames)} stress test frames with causal chains")

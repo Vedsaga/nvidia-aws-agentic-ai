@@ -27,6 +27,7 @@ class Frame:
     locus_time: Optional[str] = None  # Temporal locus
     locus_space: Optional[str] = None # Spatial locus
     locus_topic: Optional[str] = None # Topic locus
+    causal_links: Optional[list[dict]] = None # Causal links to other frames
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
