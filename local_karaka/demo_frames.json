@@ -1,0 +1,62 @@
+[
+    {
+        "frame_id": "F0",
+        "sentence_id": 0,
+        "sentence_text": "The European Research Council funded a large clinical study in 2022.",
+        "kriya": "fund",
+        "kriya_surface": "funded",
+        "karta": "The European Research Council",
+        "karma": "a large clinical study",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": "2022",
+        "locus_space": null,
+        "locus_topic": null
+    },
+    {
+        "frame_id": "F1",
+        "sentence_id": 1,
+        "sentence_text": "The study was conducted in Copenhagen using advanced imaging tools.",
+        "kriya": "conduct",
+        "kriya_surface": "was conducted",
+        "karta": null,
+        "karma": "The study",
+        "karana": "advanced imaging tools",
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": "Copenhagen",
+        "locus_topic": null
+    },
+    {
+        "frame_id": "F2",
+        "sentence_id": 2,
+        "sentence_text": "Dr. Chen led the research on neuroplasticity.",
+        "kriya": "lead",
+        "kriya_surface": "led",
+        "karta": "Dr. Chen",
+        "karma": "the research",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": "neuroplasticity"
+    },
+    {
+        "frame_id": "F3",
+        "sentence_id": 3,
+        "sentence_text": "The team published the results in Nature in 2023.",
+        "kriya": "publish",
+        "kriya_surface": "published",
+        "karta": "The team",
+        "karma": "the results",
+        "karana": null,
+        "sampradana": "Nature",
+        "apadana": null,
+        "locus_time": "2023",
+        "locus_space": null,
+        "locus_topic": null
+    }
+]

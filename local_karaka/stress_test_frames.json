@@ -1,0 +1,192 @@
+[
+    {
+        "frame_id": "F0",
+        "sentence_id": 0,
+        "sentence_text": "In 2019, Professor Sharma discovered a novel protein marker in Mumbai.",
+        "kriya": "discover",
+        "kriya_surface": "discovered",
+        "karta": "Professor Sharma",
+        "karma": "a novel protein marker",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": "2019",
+        "locus_space": "Mumbai",
+        "locus_topic": null,
+        "causal_links": []
+    },
+    {
+        "frame_id": "F1",
+        "sentence_id": 1,
+        "sentence_text": "This discovery led to a collaboration between IIT Delhi and Stanford University.",
+        "kriya": "lead",
+        "kriya_surface": "led to",
+        "karta": "This discovery",
+        "karma": "a collaboration",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": null,
+        "causal_links": [
+            {
+                "cause_frame": "F0",
+                "effect_frame": "F1",
+                "causal_type": "prayojana"
+            }
+        ]
+    },
+    {
+        "frame_id": "F2",
+        "sentence_id": 2,
+        "sentence_text": "Dr. Williams from Stanford analyzed the protein using CRISPR technology.",
+        "kriya": "analyze",
+        "kriya_surface": "analyzed",
+        "karta": "Dr. Williams",
+        "karma": "the protein",
+        "karana": "CRISPR technology",
+        "sampradana": null,
+        "apadana": "Stanford",
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": null,
+        "causal_links": []
+    },
+    {
+        "frame_id": "F3",
+        "sentence_id": 3,
+        "sentence_text": "The analysis revealed that the protein could inhibit cancer cell growth.",
+        "kriya": "reveal",
+        "kriya_surface": "revealed",
+        "karta": "The analysis",
+        "karma": "that the protein could inhibit cancer cell growth",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": "cancer cell growth",
+        "causal_links": [
+            {
+                "cause_frame": "F2",
+                "effect_frame": "F3",
+                "causal_type": "karana"
+            }
+        ]
+    },
+    {
+        "frame_id": "F4",
+        "sentence_id": 4,
+        "sentence_text": "In 2021, the team received $5 million funding from the NIH.",
+        "kriya": "receive",
+        "kriya_surface": "received",
+        "karta": "the team",
+        "karma": "$5 million funding",
+        "karana": null,
+        "sampradana": null,
+        "apadana": "the NIH",
+        "locus_time": "2021",
+        "locus_space": null,
+        "locus_topic": null,
+        "causal_links": []
+    },
+    {
+        "frame_id": "F5",
+        "sentence_id": 5,
+        "sentence_text": "The funding enabled them to conduct clinical trials in three countries.",
+        "kriya": "enable",
+        "kriya_surface": "enabled",
+        "karta": "The funding",
+        "karma": "to conduct clinical trials",
+        "karana": null,
+        "sampradana": "them",
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": "three countries",
+        "locus_topic": null,
+        "causal_links": [
+            {
+                "cause_frame": "F4",
+                "effect_frame": "F5",
+                "causal_type": "karana"
+            }
+        ]
+    },
+    {
+        "frame_id": "F6",
+        "sentence_id": 6,
+        "sentence_text": "By 2023, the drug had reduced tumor size by 60% in treated patients.",
+        "kriya": "reduce",
+        "kriya_surface": "had reduced",
+        "karta": "the drug",
+        "karma": "tumor size",
+        "karana": null,
+        "sampradana": "treated patients",
+        "apadana": null,
+        "locus_time": "2023",
+        "locus_space": null,
+        "locus_topic": null,
+        "causal_links": []
+    },
+    {
+        "frame_id": "F7",
+        "sentence_id": 7,
+        "sentence_text": "Professor Sharma attributed the success to the collaborative approach.",
+        "kriya": "attribute",
+        "kriya_surface": "attributed",
+        "karta": "Professor Sharma",
+        "karma": "the success",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": "the collaborative approach",
+        "causal_links": [
+            {
+                "cause_frame": "F1",
+                "effect_frame": "F7",
+                "causal_type": "hetu"
+            }
+        ]
+    },
+    {
+        "frame_id": "F8",
+        "sentence_id": 8,
+        "sentence_text": "The FDA approved the drug for Phase 3 trials in December 2023.",
+        "kriya": "approve",
+        "kriya_surface": "approved",
+        "karta": "The FDA",
+        "karma": "the drug",
+        "karana": null,
+        "sampradana": "Phase 3 trials",
+        "apadana": null,
+        "locus_time": "December 2023",
+        "locus_space": null,
+        "locus_topic": null,
+        "causal_links": [
+            {
+                "cause_frame": "F6",
+                "effect_frame": "F8",
+                "causal_type": "karana"
+            }
+        ]
+    },
+    {
+        "frame_id": "F9",
+        "sentence_id": 9,
+        "sentence_text": "Dr. Williams received the Breakthrough Prize for her work on this project.",
+        "kriya": "receive",
+        "kriya_surface": "received",
+        "karta": "Dr. Williams",
+        "karma": "the Breakthrough Prize",
+        "karana": null,
+        "sampradana": null,
+        "apadana": null,
+        "locus_time": null,
+        "locus_space": null,
+        "locus_topic": "this project",
+        "causal_links": []
+    }
+]
