@@ -17,6 +17,8 @@ This directory contains the complete design documentation for our async microser
 ### Foundation
 
 - [`karaka-axioms.md`](./karaka-axioms.md) - **CANONICAL** - Foundational axioms and invariants of the Kāraka system
+- [`axiom-layer-mapping.md`](./axiom-layer-mapping.md) - Maps 39 axioms to Pāṇinian governance layers (Foundation/Operational/Meta)
+- [`panini-advanced-integration.md`](./panini-advanced-integration.md) - Research roadmap for advanced Pāṇinian concepts integration
 - [`error-handling.md`](./error-handling.md) - Application-wide error tracking and tracing system
 - [`global-status-enum.md`](./global-status-enum.md) - Centralized status definitions
 
