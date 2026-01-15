@@ -284,6 +284,100 @@
             }
         }
 
+        /* Auto-Pilot Toggle */
+        .autopilot-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.4rem 0.75rem;
+            background: var(--color-muted);
+            border: 1px solid var(--color-border);
+            border-radius: var(--radius-full);
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            user-select: none;
+        }
+
+        .autopilot-toggle:hover {
+            border-color: var(--color-brand);
+        }
+
+        .autopilot-toggle.active {
+            background: rgba(223, 114, 139, 0.15);
+            border-color: var(--color-brand);
+        }
+
+        .autopilot-toggle .toggle-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-muted-foreground);
+            transition: background 0.2s;
+        }
+
+        .autopilot-toggle.active .toggle-indicator {
+            background: var(--color-brand);
+            box-shadow: 0 0 8px var(--color-brand);
+        }
+
+        /* Feature Hint Badge */
+        .feature-hint {
+            font-size: 0.65rem;
+            color: var(--color-brand);
+            background: rgba(223, 114, 139, 0.1);
+            padding: 0.2rem 0.5rem;
+            border-radius: var(--radius-full);
+            margin-left: 0.5rem;
+            animation: hintPulse 2s ease-in-out 3;
+        }
+
+        @keyframes hintPulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Collapsible Panel */
+        .panel.collapsible .panel-header {
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .panel.collapsible .panel-header:hover {
+            background: var(--color-border);
+        }
+
+        .panel.collapsible .panel-header::after {
+            content: '▼';
+            font-size: 0.6rem;
+            margin-left: 0.75rem;
+            opacity: 0.5;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .panel.collapsible .panel-header:hover::after {
+            opacity: 1;
+        }
+
+        .panel.collapsible.collapsed .panel-header::after {
+            transform: rotate(-90deg);
+        }
+
+        .panel.collapsible.collapsed .panel-content {
+            display: none;
+        }
+
+        .panel.collapsible.collapsed {
+            flex-shrink: 0 !important;
+        }
+
 
         /* ══════════════════════════════════════════════════════════
     PANELS
@@ -761,6 +855,14 @@
                     <span>POC Demo v0.1</span>
                 </div>
             </div>
+
+            <!-- Auto-Pilot Toggle -->
+            <div class="autopilot-toggle active" id="autopilotToggle" onclick="toggleStoryMode()"
+                title="Auto-focus graph when scrolling through frames">
+                <span class="toggle-indicator"></span>
+                <span id="autopilotLabel">Auto-Pilot</span>
+            </div>
+
             <div class="status-badge">
                 <div class="status-dot" id="statusDot"></div>
                 <span id="statusText">Disconnected</span>
@@ -770,10 +872,10 @@
         <!-- Left Column -->
         <div class="left-column">
             <!-- Input Panel -->
-            <div class="panel input-panel">
-                <div class="panel-header">
+            <div class="panel input-panel collapsible" id="inputPanel">
+                <div class="panel-header" onclick="togglePanel('inputPanel')">
                     <span class="panel-title">📝 Input Text</span>
-                    <button class="btn-secondary" id="clearBtn"
+                    <button class="btn-secondary" id="clearBtn" onclick="event.stopPropagation()"
                         style="padding: 0.375rem 0.75rem; font-size: 0.75rem;">Clear All</button>
                 </div>
                 <div class="panel-content">
@@ -815,8 +917,8 @@
             </div>
 
             <!-- Q&A Panel -->
-            <div class="panel qa-panel">
-                <div class="panel-header">
+            <div class="panel qa-panel collapsible" id="qaPanel">
+                <div class="panel-header" onclick="togglePanel('qaPanel')">
                     <span class="panel-title">❓ Ask Questions</span>
                 </div>
                 <div class="panel-content">
@@ -831,10 +933,13 @@
             </div>
 
             <!-- Frames Panel -->
-            <div class="panel frames-panel" style="flex: 1; min-height: 200px;">
+            <div class="panel frames-panel" style="flex: 1; min-height: 280px;">
                 <div class="panel-header">
                     <span class="panel-title">📦 Extracted Frames</span>
-                    <span id="frameCount" style="font-size: 0.75rem; color: var(--color-muted-foreground);">0
+                    <span class="feature-hint" title="Hover roles to highlight graph nodes, scroll to auto-navigate">✨
+                        Interactive</span>
+                    <span id="frameCount"
+                        style="font-size: 0.75rem; color: var(--color-muted-foreground); margin-left: auto;">0
                         frames</span>
                 </div>
                 <div class="panel-content">
@@ -885,6 +990,8 @@
         let ws = null;
         let frames = [];
         let graphData = { nodes: [], edges: [] };
+        let isStoryMode = true; // Auto-Pilot mode
+        let currentGraphInstance = null; // Reference for Neural Link
 
         // DOM Elements
         const statusDot = document.getElementById('statusDot');
@@ -902,6 +1009,16 @@
         const answerBox = document.getElementById('answerBox');
         const framesList = document.getElementById('framesList');
         const frameCount = document.getElementById('frameCount');
+
+        // ══════════════════════════════════════════════════════════
+        // COLLAPSIBLE PANELS
+        // ══════════════════════════════════════════════════════════
+        window.togglePanel = function (panelId) {
+            const panel = document.getElementById(panelId);
+            if (panel) {
+                panel.classList.toggle('collapsed');
+            }
+        };
 
         // ══════════════════════════════════════════════════════════
         // WEBSOCKET CONNECTION
@@ -1093,22 +1210,28 @@ Dr. Williams received the Breakthrough Prize for her work on this project.`;
                 return;
             }
 
-            framesList.innerHTML = frames.map(frame => `
-                <div class="frame-card">
+            framesList.innerHTML = frames.map((frame, idx) => `
+                <div class="frame-card" data-frame-idx="${idx}" data-kriya="${frame.kriya}">
                     <div class="frame-header">
                         <span class="frame-id">${frame.frame_id}</span>
                         <span class="frame-kriya">${frame.kriya}</span>
                     </div>
                     <div class="frame-roles">
                         ${Object.entries(frame.karakas || {}).map(([role, value]) => `
-                            <div class="role-tag">
+                            <div class="role-tag" 
+                                 onmouseenter="highlightNodeByLabel('${value.replace(/'/g, "\\'")}')"
+                                 onmouseleave="clearNeuralLink()"
+                                 style="cursor: crosshair;">
                                 <span class="role-name">${role}:</span>
-                                <span class="role-value">${value}</span>
+                                <span class="role-value" style="border-bottom: 1px dotted var(--color-brand);">${value}</span>
                             </div>
                         `).join('')}
                     </div>
                 </div>
             `).join('');
+
+            // Setup Auto-Pilot observer for scroll-based focus
+            setupAutoPilotObserver();
         }
 
         function showAnswer(msg) {
@@ -1374,6 +1497,9 @@ Dr. Williams received the Breakthrough Prize for her work on this project.`;
                     node.fy = node.y;
                 });
 
+            // Store reference for Neural Link
+            currentGraphInstance = graphInstance;
+
             // Handle resize
             const resizeObserver = new ResizeObserver(entries => {
                 for (let entry of entries) {
@@ -1417,7 +1543,67 @@ Dr. Williams received the Breakthrough Prize for her work on this project.`;
         });
 
         // ══════════════════════════════════════════════════════════
-        // INITIALIZE
+        // NEURAL LINK & AUTO-PILOT
+        // ══════════════════════════════════════════════════════════
+
+        // Neural Link: Highlight graph node when hovering text
+        window.highlightNodeByLabel = function (label) {
+            if (!currentGraphInstance || !label) return;
+            const cleanLabel = label.toLowerCase();
+            const node = graphData.nodes.find(n =>
+                (n.label || '').toLowerCase() === cleanLabel ||
+                (n.label || '').toLowerCase().includes(cleanLabel)
+            );
+            if (node && currentGraphInstance) {
+                // Trigger hover effect on the node
+                currentGraphInstance.emitParticle(node);
+                currentGraphInstance.centerAt(node.x, node.y, 500);
+            }
+        };
+
+        window.clearNeuralLink = function () {
+            // Reset is handled by the graph's own hover logic
+        };
+
+        // Auto-Pilot: Focus graph on frame when scrolling
+        let autoPilotObserver = null;
+        function setupAutoPilotObserver() {
+            if (autoPilotObserver) autoPilotObserver.disconnect();
+            if (!isStoryMode) return;
+
+            const cards = document.querySelectorAll('.frame-card');
+            autoPilotObserver = new IntersectionObserver((entries) => {
+                if (!isStoryMode || !currentGraphInstance) return;
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const kriya = entry.target.dataset.kriya;
+                        // Find matching event node
+                        const eventNode = graphData.nodes.find(n =>
+                            n.type === 'event' && (n.label || '').includes(kriya)
+                        );
+                        if (eventNode) {
+                            currentGraphInstance.centerAt(eventNode.x, eventNode.y, 800);
+                            currentGraphInstance.zoom(2, 800);
+                        }
+                        // Highlight active card
+                        cards.forEach(c => c.style.borderColor = '');
+                        entry.target.style.borderColor = 'var(--color-brand)';
+                    }
+                });
+            }, { root: document.querySelector('.left-column'), threshold: 0.6 });
+
+            cards.forEach(card => autoPilotObserver.observe(card));
+        }
+
+        // Toggle for Story Mode (can be called from console or UI)
+        window.toggleStoryMode = function () {
+            isStoryMode = !isStoryMode;
+            console.log('Auto-Pilot:', isStoryMode ? 'ON' : 'OFF');
+            if (isStoryMode) setupAutoPilotObserver();
+        };
+
+        // ══════════════════════════════════════════════════════════
+        // INIT
         // ══════════════════════════════════════════════════════════
         connect();
         renderFramesList();
