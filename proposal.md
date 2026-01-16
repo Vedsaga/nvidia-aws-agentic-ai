@@ -285,6 +285,306 @@ F_abandon = ⟨abandon, {Kartā: Ram, Karma: Sita}, ...⟩
 
 States are temporally scoped, avoiding contradiction while preserving context.
 
+
+```markdown
+## 5.5 Multi-Index Frame Organization and Clustering
+
+### 5.5.1 Motivation
+
+Frames are created in **authorial order** (as text is processed sequentially), but queries require access via multiple organizational schemes: causal order, temporal order, thematic grouping, and access frequency. Re-sorting frames into every possible ordering upfront is computationally prohibitive and mirrors the cognitive limitation that requires humans to use external memory aids.
+
+We propose a **multi-index architecture** where frames are stored once but organized through multiple simultaneous orderings, with expensive indexes constructed lazily based on usage patterns.
+
+### 5.5.2 Frame Positional Metadata
+
+**Definition 9 (Extended Frame)**
+
+We extend Definition 1 to include positional metadata:
+
+```
+F = ⟨k, R, t, s, c, positions⟩
+```
+
+where `positions` is a tuple:
+
+```
+positions = ⟨α, ψ, τ, η, ω⟩
+```
+
+with:
+- `α` = authorial position (sentence index in source document)
+- `ψ` = causal rank (position in inferred causal chain)
+- `τ` = temporal rank (chronological position)
+- `η` = emotional intensity (optional, for narrative analysis)
+- `ω` = access frequency (query usage count)
+
+### 5.5.3 Index Layer Architecture
+
+**Definition 10 (Frame Index)**
+
+A frame index is a function:
+
+```
+I: IndexType → OrderedSequence(F)
+```
+
+We maintain multiple indexes simultaneously:
+
+| Index Type | Sort Key | Construction Cost | Construction Time |
+|------------|----------|-------------------|-------------------|
+| Authorial | α (given) | O(n) | Immediate |
+| Temporal | τ (extracted) | O(n log n) | On first temporal query |
+| Causal | ψ (inferred) | O(n² · d) | On first causal query |
+| Access Pattern | ω (learned) | O(n log n) | Continuous update |
+| Emotional | η (optional) | O(n log n) | On demand |
+
+Where:
+- `n` = number of frames
+- `d` = average causal inference depth
+
+**Key Principle**: Indexes are **derived views** over base frames. They can be deleted and rebuilt without corrupting ground truth.
+
+### 5.5.4 Frame Clustering
+
+**Definition 11 (Frame Cluster)**
+
+A frame cluster is a tuple:
+
+```
+C = ⟨topic, F_set, coherence, access_pattern⟩
+```
+
+where:
+- `topic` is a semantic label (entity, event type, or theme)
+- `F_set ⊆ F` is the set of frames in the cluster
+- `coherence ∈ [0,1]` measures semantic similarity
+- `access_pattern` is co-occurrence statistics
+
+**Cluster Formation Algorithm**:
+
+```
+Algorithm 1: Incremental Cluster Formation
+
+Input: Query q, frames accessed F_accessed
+Output: Updated cluster set C
+
+1. For each pair (f_i, f_j) ∈ F_accessed × F_accessed:
+2.   cooccurrence(f_i, f_j) += 1
+3. 
+4. If cooccurrence(f_i, f_j) > θ_cluster:
+5.   If ∃ cluster C containing f_i or f_j:
+6.     C.F_set ← C.F_set ∪ {f_i, f_j}
+7.   Else:
+8.     Create new cluster C = ⟨infer_topic(f_i, f_j), {f_i, f_j}, ...⟩
+9. 
+10. Update coherence scores for affected clusters
+11. Evict clusters with coherence < θ_evict
+```
+
+**Cluster Coherence**:
+
+```
+coherence(C) = (1/|C.F_set|²) ∑_{f_i,f_j ∈ C.F_set} similarity(f_i, f_j)
+```
+
+where `similarity` measures semantic overlap (shared entities, related kriyā, temporal proximity).
+
+### 5.5.5 Example: Query-Driven Frame Access
+
+**Scenario**: Text processed in authorial order creates frames:
+
+```
+F₁ = ⟨cry, {Kartā: Ram}, t=unspecified, positions=⟨α=1, ψ=4, τ=4, ...⟩⟩
+F₂ = ⟨take, {Karma: Sita}, t=unspecified, positions=⟨α=2, ψ=3, τ=3, ...⟩⟩
+F₃ = ⟨kidnap, {Kartā: Ravana, Karma: Sita}, positions=⟨α=3, ψ=2, τ=2, ...⟩⟩
+F₄ = ⟨hunt, {Kartā: Ram}, positions=⟨α=4, ψ=1, τ=1, ...⟩⟩
+```
+
+**Authorial order**: [F₁, F₂, F₃, F₄] (as written)  
+**Causal order**: [F₄, F₃, F₂, F₁] (hunting enabled kidnapping, which caused crying)
+
+**Query 1**: "What caused Ram to cry?" (requires causal order)
+- Access via CausalIndex: [F₄, F₃, F₂, F₁]
+- Traverse: F₁ ←[caused_by]— F₂ ←[caused_by]— F₃
+- Answer: "Sita's kidnapping"
+
+**Query 2** (repeated 50 times): "What happened to Sita?"
+- Forms cluster: C_Sita = ⟨"Sita_fate", {F₂, F₃}, coherence=0.91⟩
+- 51st query: Direct cluster access (2 frames instead of 1000+)
+
+### 5.5.6 Composite Frames (Frame Aggregation)
+
+For frequently co-accessed frame groups, the system can create **composite frames** as derived facts.
+
+**Definition 12 (Composite Frame)**
+
+```
+F_comp = ⟨k_summary, R_agg, temporal_span, component_frames, confidence⟩
+```
+
+where:
+- `k_summary` is an aggregate action (e.g., "childhood_experience")
+- `R_agg` merges roles from component frames
+- `component_frames = [F_i, F_j, ..., F_k]` are the base frames
+- `confidence` reflects aggregation quality
+
+**Example**:
+
+```
+Component frames:
+F₅ = ⟨play, {Kartā: Ram, Co-agent: Friends, Locus: winter}⟩
+F₆ = ⟨eat, {Kartā: Ram, Karma: chura_chini, Locus: evening}⟩  
+F₇ = ⟨laugh, {Kartā: Ram, Co-agent: Friends}⟩
+
+Composite frame (after 100+ queries about "Ram's childhood"):
+F_comp = ⟨childhood_activities, 
+          {Kartā: Ram, Themes: [play, eat, socialize], Setting: winter_village},
+          temporal_span=[childhood_period],
+          component_frames=[F₅, F₆, F₇],
+          confidence=0.94⟩
+```
+
+**Storage**: Composite frames are stored in a **derived view layer**, not in the base frame graph.
+
+**Regeneration**: Can always be recomputed from component frames if deleted.
+
+**Usage**: Reduces retrieval cost for high-frequency aggregate queries from O(k) to O(1), where k = number of component frames.
+
+### 5.5.7 Meta-Memory: Statistical Patterns Over Access
+
+Beyond individual query paths (FAM, §8), the system maintains **meta-patterns** about query types.
+
+**Definition 13 (Meta-Memory Index)**
+
+```
+M₃: QueryClass → Distribution(Clusters × EdgeTypes × Depth)
+```
+
+**Example**:
+
+```
+M₃(PROVENANCE) = {
+  typical_clusters: {Epistemic_Frames: 0.73, Narrative_Frames: 0.27},
+  typical_edges: {described_by: 0.81, reported_by: 0.19},
+  depth_distribution: Gaussian(μ=2.3, σ=0.8)
+}
+```
+
+**Usage**: When a PROVENANCE query arrives:
+1. Check M₃(PROVENANCE) for typical patterns
+2. Pre-fetch likely clusters (Epistemic_Frames)
+3. Prioritize likely edge types (described_by)
+4. Estimate depth (≈2-3 hops)
+
+**Learning**: Updated after each query:
+
+```
+M₃(q.class).clusters[c] ← M₃(q.class).clusters[c] + α · indicator(c ∈ used_clusters)
+M₃(q.class).edges[e] ← M₃(q.class).edges[e] + α · indicator(e ∈ used_edges)
+```
+
+where `α` is learning rate.
+
+**Mathematical Formalization**:
+
+This is a statistical model over the triple product space:
+
+```
+M₃: 𝒬 → P(𝒞 × ℰ × ℕ)
+```
+
+where:
+- `𝒬` = set of query classes
+- `𝒞` = set of frame clusters
+- `ℰ` = set of edge types
+- `ℕ` = natural numbers (depth)
+- `P(...)` = probability distribution
+
+**This formally captures "memory about memory"**: statistical knowledge about how semantic memory is typically accessed, without making new semantic claims.
+
+### 5.5.8 Storage Architecture
+
+**Physical Implementation**: Graph Database (Neo4j, ArangoDB, etc.)
+
+```
+Logical Layer (Kāraka Model):
+  Frames as semantic objects: F = ⟨k, R, t, s, c, positions⟩
+
+Physical Layer (Graph DB):
+  Nodes:
+    - Frame nodes (one per frame, properties = k, R, t, s, c, positions)
+    - Entity nodes (referenced by frames)
+    - Cluster meta-nodes (contain frame IDs)
+  
+  Edges:
+    - Semantic edges (caused_by, described_by, etc.)
+    - Cluster membership edges (frame → cluster)
+  
+  Indexes:
+    - B-tree on positions.α (authorial order)
+    - B-tree on positions.τ (temporal order)
+    - Custom index on positions.ψ (causal order, lazy)
+    - Inverted index on positions.ω (access frequency)
+```
+
+**Separation of Concerns**:
+- **Kāraka model** defines semantic correctness
+- **Graph DB** provides scalable storage and querying
+- **Indexes** enable efficient access patterns
+- **Clusters** emerge from usage, stored as meta-nodes
+
+### 5.5.9 Complexity Analysis with Clustering
+
+**Without Clustering**:
+- Query requires scanning O(n) frames in worst case
+- Causal reasoning: O(n · d) where d = inference depth
+
+**With Clustering**:
+- High-frequency queries: O(1) cluster lookup
+- Cluster access: O(|C|) where |C| ≪ n (typically 2-10 frames)
+
+**Expected Performance**:
+
+```
+P(query hits cluster) = ω_cluster / (ω_cluster + ω_novel)
+```
+
+where:
+- `ω_cluster` = queries matching existing clusters
+- `ω_novel` = novel queries requiring full traversal
+
+For mature systems with sufficient usage history, `ω_cluster / ω_novel` ≈ 80/20 (Pareto principle).
+
+**Cluster Formation Cost**:
+- Per query: O(|F_accessed|²) for co-occurrence tracking
+- Amortized: O(1) per query after steady state
+
+### 5.5.10 Design Principles
+
+**P5: Multiple Simultaneous Orderings**  
+Frames maintain position in authorial, causal, temporal, and access-pattern orderings without duplication.
+
+**P6: Lazy Index Construction**  
+Expensive indexes (causal, emotional) are built only when queries require them.
+
+**P7: Usage-Driven Clustering**  
+Frame clusters emerge from observed co-access patterns, not predetermined categorization.
+
+**P8: Compositionality**  
+Composite frames and meta-memory are derived views that can be regenerated from base frames.
+
+---
+
+**Connection to Other Sections**:
+- Clusters reduce retrieval cost mentioned in §7 (Complexity)
+- Meta-memory formalizes the intuition behind FAM in §8
+- Physical storage supports bounded traversal from §7.1
+```
+
+---
+
+**Copy this entire block and insert it after Section 5.4 (Handling Non-Eventive Knowledge) in your paper.**
+
 ---
 
 ## 6. Point-of-View as Constraint Functions
