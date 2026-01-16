@@ -2,18 +2,18 @@
   {
     "frame_id": "F0",
     "sentence_id": 0,
-    "sentence_text": "Beth places four whole ice cubes in a frying pan at the start of the first minute, then five at the start of the second minute and some more at the start of the third minute, but none in the fourth minute.",
-    "kriya": "place",
-    "kriya_surface": "places",
-    "karta": "Beth",
-    "karma": "four whole ice cubes",
+    "sentence_text": "In 2019, Professor Sharma discovered a novel protein marker in Mumbai.",
+    "kriya": "discover",
+    "kriya_surface": "discovered",
+    "karta": "Professor Sharma",
+    "karma": "a novel protein marker",
     "karana": null,
     "sampradana": null,
     "apadana": null,
-    "locus_time": "at the start of the first minute",
-    "locus_space": "in a frying pan",
+    "locus_time": "2019",
+    "locus_space": "Mumbai",
     "locus_topic": null,
-    "causal_links": null
+    "causal_links": []
   },
   {
     "frame_id": "F1",
