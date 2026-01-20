@@ -89,7 +89,7 @@ The architectural contribution is evaluated independently; Pāṇini provides th
 - ❌ NOT a replacement for statistical/neural methods
 - ❌ NOT a claim of completeness for all possible semantic systems
 
-**Note on Confidence**: Throughout this proposal, confidence values `c ∈ [0,1]` are treated as **monotonic plausibility measures** (ordinal, not calibrated probabilities). They provide ordering for correction decisions but do not imply statistical calibration.
+**Note on Confidence**: "Confidence" in this architecture is a **deterministic ranking score**, not a statistical probability. It is used strictly for **conflict resolution** (tie-breaking): if two identity hypotheses conflict, the one with the higher score is preserved. We do not claim these scores represent calibrated probabilities of truth.
 
 ---
 

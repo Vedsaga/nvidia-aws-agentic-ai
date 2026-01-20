@@ -89,14 +89,16 @@ K = {Kartā, Karma, Karaṇa, Sampradāna, Apādāna, Adhikaraṇa}
 
 **Implementation**: `Ram_instance_42 ≠ Ram_instance_73` by default, until an identity frame links them.
 
-### Note on Confidence Semantics
+### Clarification: Confidence as Ranking Metric
 
-**Clarification**: Throughout this document, confidence `c ∈ [0,1]` is treated as a **monotonic plausibility measure**, not a calibrated probability. We do not assume:
-- Independence between confidence values
-- Bayesian interpretation of updates
-- Calibration against ground truth
+**Confusion Check**: "Confidence" here is **not** a statistical probability (e.g., "90% chance of truth"). It is a **deterministic ranking score** used for conflict resolution.
 
-Confidence values provide a partial ordering for correction decisions (retract lower-confidence assumptions first) and decay under composition (`c(π(F₁,F₂)) ≤ min(c(F₁), c(F₂))`). A principled confidence calculus (Bayesian, Dempster-Shafer, or fuzzy) would strengthen this framework but is deferred to future work.
+**Operational Definition**:
+1.  **Tie-Breaking**: If hypothesis H₁ conflicts with H₂, and score(H₁) > score(H₂), the system retracts H₂ first.
+2.  **Weakest Link**: A conclusion derived from multiple assumptions inherits the *lowest* score among them (`min` rule).
+3.  **Source**: Scores are assigned by the extraction layer (e.g., LLM log-probs or rule heuristics), but they are treated merely as ordinal ranks within the graph.
+
+**Why this matters**: We do not claim this system manages *uncertainty* in the Bayesian sense. We claim it manages *contradiction* by having a strictly ordered preference list.
 
 ---
 
