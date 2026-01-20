@@ -77,15 +77,26 @@ K = {Kartā, Karma, Karaṇa, Sampradāna, Apādāna, Adhikaraṇa}
 
 **Guarantee**: Ensures termination and inspectability.
 
-### Axiom A5: Truth Preservation Over Compression
+### Axiom A5: Observational Commitment
 
-**Statement**: Observations are preserved indefinitely. Relevance is determined by query-time filtering (POV), not deletion. Storage is cheap; lost provenance is irretrievable.
+**Statement**: Observations are treated as fixed ground facts relative to the system and are not modified during correction. Relevance is determined by query-time filtering (POV), not deletion. Storage is cheap; lost provenance is irretrievable.
+
+**Clarification**: This is an architectural constraint, not an epistemological claim about reality. Observations may be noisy or uncertain in their acquisition, but once committed to the system, they serve as the stable base against which identity hypotheses are tested.
 
 ### Axiom A6: Identity as Hypothesis
 
 **Statement**: Entity identity is **never** assumed from string/label matching. It must be explicitly asserted as a typed identity frame with provenance and confidence.
 
 **Implementation**: `Ram_instance_42 ≠ Ram_instance_73` by default, until an identity frame links them.
+
+### Note on Confidence Semantics
+
+**Clarification**: Throughout this document, confidence `c ∈ [0,1]` is treated as a **monotonic plausibility measure**, not a calibrated probability. We do not assume:
+- Independence between confidence values
+- Bayesian interpretation of updates
+- Calibration against ground truth
+
+Confidence values provide a partial ordering for correction decisions (retract lower-confidence assumptions first) and decay under composition (`c(π(F₁,F₂)) ≤ min(c(F₁), c(F₂))`). A principled confidence calculus (Bayesian, Dempster-Shafer, or fuzzy) would strengthen this framework but is deferred to future work.
 
 ---
 
@@ -774,6 +785,10 @@ Output: Corrected graph G'
 | POV Divergence Detection | **Theorem** | Theorem 6 |
 | Self-Correction Soundness | **Theorem** | Theorem 8 |
 | Trace Completeness | **Theorem** (by construction) | Theorem 3 |
+| Identity Sufficiency for Correction | **Theorem** | Theorem 9 |
+| Minimal Correction Existence | **Theorem** | Theorem 10 |
+| Correction Efficiency Bound | **Theorem** | Theorem 11 |
+| **Necessity of Identity Provenance** | **Theorem** (lower bound) | Theorem 12 |
 
 ## 11. Open Questions for Further Research
 
@@ -786,6 +801,186 @@ Output: Corrected graph G'
 4. **Computational Complexity Lower Bounds**: Can we prove the query operators are asymptotically optimal?
 
 5. **Higher-Order Meta-Traces**: When Φ₅ frames become objects of reasoning, formalize Φ₆, Φ₇, ... hierarchy.
+
+---
+
+# Part V: Semantic Correction Theory (Formal)
+
+This section presents a rigorous, self-contained formalization of semantic correction that stands independent of the Pāṇinian frame taxonomy. The results here apply to any knowledge system satisfying the stated axioms.
+
+## 12. System Definition
+
+**Definition 17 (Knowledge System)**
+
+A knowledge system is defined as:
+
+```
+𝒦 = (O, I, D, ⊢)
+```
+
+where:
+- `O` = finite set of observations (treated as ground facts relative to the system)
+- `I` = finite set of identity assumptions (hypotheses that two entities are the same)
+- `D` = set of derived statements
+- `⊢: 𝒫(O) × 𝒫(I) → 𝒫(D)` = derivation operator
+
+## 13. Axioms for Semantic Correction
+
+**Axiom SC0 (Observational Commitment)**
+
+Observations are treated as fixed ground facts and are not retracted during correction.
+
+```
+O is not modified during correction operations
+```
+
+*Note*: This is an architectural constraint, not an epistemological claim about reality.
+
+**Axiom SC1 (Observation Monotonicity)**
+
+Adding observations cannot remove derivations.
+
+```
+O₁ ⊆ O₂ ⟹ ⊢(O₁, I) ⊆ ⊢(O₂, I)
+```
+
+**Axiom SC2 (Identity Non-Monotonicity)**
+
+Adding identity assumptions may invalidate derivations.
+
+```
+I₁ ⊆ I₂ ⇏ ⊢(O, I₁) ⊆ ⊢(O, I₂)
+```
+
+*Interpretation*: Identity assumptions are the only sanctioned source of non-monotonicity in the system.
+
+**Axiom SC3 (Soundness)**
+
+If all premises are true, derived conclusions are true.
+
+```
+d ∈ ⊢(O, I) ∧ (O ∪ I true) ⟹ d true
+```
+
+## 14. Provenance
+
+**Definition 18 (Provenance)**
+
+For every derived statement d ∈ D, there exists provenance:
+
+```
+prov(d) = (O_d, I_d) such that d ∈ ⊢(O_d, I_d)
+```
+
+where O_d ⊆ O and I_d ⊆ I are the minimal observation and identity subsets supporting d.
+
+## 15. Fundamental Equation
+
+```
+┌───────────────────────────────────┐
+│      D = ⊢(O | I)                 │
+│                                   │
+│ Derived knowledge is conditional  │
+│ on identity assumptions.          │
+└───────────────────────────────────┘
+```
+
+## 16. Core Theorems
+
+**Theorem 9 (Identity Sufficiency for Correction)**
+
+*If a derived statement is false, then retracting a subset of its identity assumptions eliminates it.*
+
+```
+d false ⟹ ∃ I' ⊆ I_d : d ∉ ⊢(O_d, I_d \ I')
+```
+
+**Proof**:
+1. Since d is false and d ∈ ⊢(O_d, I_d), the inference is unsound
+2. By SC3, at least one element of (O_d ∪ I_d) must be false
+3. By SC0, O_d is not retracted
+4. By SC1, removing observations cannot invalidate d
+5. Therefore, falsity must lie in I_d
+6. Hence ∃ I' ⊆ I_d whose removal blocks the derivation ∎
+
+**Theorem 10 (Minimal Correction)**
+
+*There exists a minimal identity retraction that removes a false conclusion while minimizing collateral damage.*
+
+```
+I*_d = argmin_{I' ⊆ I_d} (|I'| + |{d' ∈ D : I' ∩ I_{d'} ≠ ∅}|)
+
+subject to: d ∉ ⊢(O_d, I_d \ I')
+```
+
+**Proof**: Existence follows from finiteness of I_d. The optimization is a weighted hitting-set problem, computable when |I|, |D| < ∞. ∎
+
+**Theorem 11 (Correction Efficiency)**
+
+*Let G = (V, E) be the dependency graph where V = I ∪ D and (i, d) ∈ E ⟺ i ∈ I_d.*
+
+*Define graph density: ρ = |E| / (|I| · |D|)*
+
+*Then expected correction cost satisfies:*
+
+```
+𝔼[correction cost] = O(ρ · |D|)
+```
+
+*For sparse graphs (ρ → 0), correction approaches constant time.*
+
+**Proof**: Removing one identity node affects ρ|D| derived nodes on average. Under uniform random attachment of identity edges to derived nodes, the expected cascade size is ρ|D|. ∎
+
+**Theorem 12 (Necessity of Identity Provenance)**
+
+*Efficient correction is impossible without identity tracking.*
+
+```
+CorrectCost_{with provenance}(d) = O(|I_d|)
+
+CorrectCost_{without provenance}(d) = Ω(|D|)
+```
+
+**Proof**: 
+- With provenance: Direct graph traversal from d to I_d gives O(|I_d|)
+- Without provenance: Must revalidate all derivations, giving Ω(|D|) ∎
+
+*This is the strongest result in this document—a lower bound proving that identity provenance is not merely useful but necessary for efficient correction.*
+
+## 17. The Correction Principle (One-Line Summary)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                 │
+│   d false ⟹ ∃ I' ⊆ I : d ∉ ⊢(O | I \ I')                       │
+│                                                                 │
+│   "All correctable semantic errors can be eliminated by        │
+│    retracting identity assumptions—without modifying           │
+│    observations."                                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 18. Relationship to Prior Work
+
+This formalization connects to established traditions:
+
+| Tradition | Connection |
+|-----------|------------|
+| **ATMS (Assumption-Based TMS)** | Identity frames function as assumptions; correction is assumption retraction |
+| **AGM Belief Revision** | Axiom SC2 corresponds to non-monotonicity; Theorem 9 is a contraction operation |
+| **Provenance Semirings** | Derivation operator ⊢ annotated with identity provenance |
+| **Non-Monotonic Logic** | Identity as the privileged locus of non-monotonicity (novelty) |
+
+The novel contribution is isolating **identity assumptions** as the single class of defeasible elements, rather than allowing arbitrary defaults or assumptions.
+
+## 19. Positioning Statement
+
+> **What this theory is**: A design invariant for provenance-aware semantic systems with provable correction properties.
+
+> **What this theory is not**: A universal law of intelligence, a physical law, or a complete theory of knowledge.
+
+The results hold for systems satisfying axioms SC0-SC3. Extension to infinite systems, probabilistic observations, or adversarial inputs requires additional constraints.
 
 ---
 

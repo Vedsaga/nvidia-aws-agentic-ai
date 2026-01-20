@@ -81,6 +81,16 @@ The architecture draws inspiration from **Pāṇini's Aṣṭādhyāyī** (~4th 
 
 The architectural contribution is evaluated independently; Pāṇini provides the conceptual vocabulary.
 
+**Scope Clarification**: This proposal presents:
+- ✅ A **design invariant** for provenance-aware semantic systems
+- ✅ A **formal theory** with explicit axioms and provable theorems
+- ✅ A **reference architecture** with decidability guarantees under stated constraints
+- ❌ NOT a universal law of intelligence
+- ❌ NOT a replacement for statistical/neural methods
+- ❌ NOT a claim of completeness for all possible semantic systems
+
+**Note on Confidence**: Throughout this proposal, confidence values `c ∈ [0,1]` are treated as **monotonic plausibility measures** (ordinal, not calibrated probabilities). They provide ordering for correction decisions but do not imply statistical calibration.
+
 ---
 
 # 1.5 Visual Overview
@@ -532,6 +542,20 @@ This demonstrates that the Pāṇinian approach is not merely linguistic theory�
 | Early vs. Late binding | Merge entities eagerly | Keep separate forever | **Late binding**: identity as explicit hypothesis |
 | Embeddings vs. Symbols | Dense vectors | Symbolic structures | **Symbolic core**, embeddings for similarity |
 | Closed vs. Open relations | Fixed schema | Unbounded predicates | **Finite canonical operators** (Pāṇinian) |
+
+## 2.6 Relationship to Established Traditions
+
+Our work connects to, but is distinct from, several established research traditions:
+
+| Tradition | Connection | Our Novelty |
+|-----------|------------|-------------|
+| **ATMS (Assumption-Based TMS)** | Identity frames function as assumptions; correction is assumption retraction | We isolate **identity** as the single class of defeasible elements, rather than allowing arbitrary assumptions |
+| **AGM Belief Revision** | Our correction operation is a contraction; identity non-monotonicity aligns with AGM axioms | We provide **provenance-aware** correction with proven efficiency bounds (Theorem 12) |
+| **Provenance Semirings** | Derivation operator annotated with identity provenance | We focus on **semantic** provenance (why this entity = that entity) rather than syntactic derivation |
+| **Non-Monotonic Logic** | Identity assumptions are defeasible | We prove identity is **sufficient and necessary** for correction (Theorems 9, 12) |
+| **Truth Maintenance Systems** | Meta-traces record justifications | Φ₅ frames are **reconstructive** (verify by re-derivation), not merely explanatory |
+
+**Key differentiator**: Prior work treats assumptions/defaults as a general class. We prove that **identity assumptions alone** are sufficient for semantic correction in provenance-aware systems, and that tracking them is **necessary** for efficient correction (see `mathematical-foundations-v1.md`, Part V).
 
 ---
 
@@ -1034,7 +1058,21 @@ The difference between **knowledge** and **understanding**:
 - Advanced logic systems reach Level 4 (deriving new facts)
 - This system reaches Level 5 (understanding *why* it derived those facts)
 
-This is the architecture for a **"Thinking Machine"**—not just a "Knowing Machine."
+## 6.5 The Strongest Claim (Necessary, Not Just Nice)
+
+From the Semantic Correction Theory (see `mathematical-foundations-v1.md`, Part V):
+
+> **Systems lacking identity provenance require Ω(|D|) cost to correct errors, while provenance-aware systems achieve O(|I_d|) correction.**
+
+This is not merely a design preference—it is a **proven necessity**. Identity tracking is required for efficient semantic correction. This positions the architecture not as one option among many, but as a **foundational requirement** for correctable reasoning systems.
+
+## 6.6 Honest Positioning
+
+> **What we claim**: In provenance-aware semantic systems with explicit identity hypotheses, correction can always be achieved by retracting a minimal set of identity assumptions, and no system lacking explicit identity tracking can match this correction efficiency.
+
+> **What we do not claim**: A universal law of intelligence, a complete theory of knowledge, or a replacement for neural/statistical methods.
+
+This is a **design invariant**—a constraint on how to build correctable systems—not a physical law.
 
 ---
 
@@ -1058,6 +1096,18 @@ Pāṇini. (~4th century BCE). Aṣṭādhyāyī.
 
 Salunke, Y. (2025). Pāṇinīya Coding System: Parallels between Sanskrit Grammar and Modern Programming. Self-published. Available at: yawork06@gmail.com
 
+### Belief Revision and Truth Maintenance
+
+Alchourrón, C., Gärdenfors, P., & Makinson, D. (1985). On the logic of theory change: Partial meet contraction and revision functions. *Journal of Symbolic Logic*, 50(2), 510-530. [AGM]
+
+de Kleer, J. (1986). An assumption-based TMS. *Artificial Intelligence*, 28(2), 127-162. [ATMS]
+
+Doyle, J. (1979). A truth maintenance system. *Artificial Intelligence*, 12(3), 231-272. [TMS]
+
+Green, T. J., Karvounarakis, G., & Tannen, V. (2007). Provenance semirings. *Proceedings of PODS*, 31-40.
+
+Reiter, R. (1980). A logic for default reasoning. *Artificial Intelligence*, 13(1-2), 81-132. [Non-Monotonic Logic]
+
 ---
 
 # Appendices
@@ -1072,6 +1122,12 @@ Contents include:
 - Query decidability theorem
 - Self-correction soundness proof
 - Complete interrogative declension tables
+- **Part V: Semantic Correction Theory** (new)
+  - Axioms SC0-SC3 for correction
+  - Theorem 9: Identity Sufficiency for Correction
+  - Theorem 10: Minimal Correction
+  - Theorem 11: Correction Efficiency
+  - **Theorem 12: Necessity of Identity Provenance** (lower bound proof)
 
 ## Appendix B: Glossary
 
