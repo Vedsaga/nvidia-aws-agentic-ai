@@ -119,13 +119,19 @@ We define two fundamental frame types:
    ```
    where predicate ∈ {Property, Identity, Taxonomy}
 
-**Theorem 1 (Binary Structural Completeness)**
+**Theorem 1 (Binary Canonical Reduction)**
 
-*For any symbolic utterance U that constitutes a well-formed linguistic expression:*
+*For any symbolic utterance U that constitutes a well-formed linguistic expression, there exists a canonical reduction:*
 
 ```
-∃!F : F ∈ (Kriyā_Frames ∪ Prātipadikārtha_Frames) ∧ semantics(F, U)
+U → F_primary + M*
+
+where:
+  F_primary ∈ (Kriyā_Frames ∪ Prātipadikārtha_Frames)
+  M* = zero or more meta-operators (Nañ, Svarūpa, Adhyāhāra, Nipāta)
 ```
+
+**Claim**: Every utterance admits a *primary* frame of exactly one type, potentially augmented by meta-operators.
 
 **Proof Sketch**:
 
@@ -149,7 +155,14 @@ We define two fundamental frame types:
 | Quotation | Meta-level? | Svarūpa operator (treat string as entity) |
 | Conditionals | Counterfactual? | Kriyā + conditional Lakāra (लिङ्/लृट्) |
 
-**Note**: This is a claim about **linguistic structure**, not about reality. The theorem asserts that language organizes meaning into these two patterns. ∎
+**Important Caveats**:
+
+1. This is a claim about **linguistic structure**, not about reality
+2. The "exactly one" claim holds for the **primary frame**; meta-operators augment but do not replace
+3. Complex discourse may require **multiple frames** in sequence (e.g., "Ram ate and Sita danced" → two Kriyā frames)
+4. The theorem is **falsifiable**: a counter-example would be an utterance that cannot be reduced to either frame type plus meta-operators
+
+**Scope**: This theorem applies within the defined symbolic domain (Axiom A1). Edge cases in specialized domains (formal logic metalanguage, paradoxical self-reference) may require extension. ∎
 
 ### 3.2 The Lakāra System (Verbal Moods)
 
@@ -631,7 +644,14 @@ Result:
 
 **Total complexity**: O(|V|² × query_depth) where depth ≤ h_max
 
-Since h_max is a constant (typically ≤ 4): **O(|V|²) worst case**, typically O(|V|) for simple queries. ∎
+Since h_max is a constant (typically ≤ 4): **O(|V|²) worst case**, typically O(|V|) for simple queries.
+
+**Scope Statement**: Decidability holds for the **reference architecture** as specified:
+- Finite, controlled graph size
+- Bounded projection depth
+- Clean Φ₅ DAG discipline
+
+Arbitrary extensions (unbounded recursion, infinite streams) may not preserve these guarantees. ∎
 
 ### 7.2 Complexity Summary
 

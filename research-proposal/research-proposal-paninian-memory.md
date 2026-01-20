@@ -1,5 +1,7 @@
-# Pāṇinian Architecture for Recursive Semantic Memory
-## A Research Proposal
+# Recursive Semantic Memory with Formal Guarantees
+## A Principled Alternative to Embedding-Centric Memory Architectures
+
+*Inspired by Pāṇinian Linguistic Theory*
 
 **Version**: 1.0  
 **Date**: 2026-01-19  
@@ -66,12 +68,18 @@ We propose a **5-Frame Recursive Architecture** grounded in Pāṇinian linguist
 
 ## 1.4 Theoretical Foundation
 
-The architecture is grounded in **Pāṇini's Aṣṭādhyāyī** (~4th century BCE), a Sanskrit grammatical work that formalized:
+The architecture draws inspiration from **Pāṇini's Aṣṭādhyāyī** (~4th century BCE), a Sanskrit grammatical work that formalized:
 - **Kāraka Theory**: 6 semantic roles for event participants (Agent, Patient, Instrument, etc.)
 - **Prātipadikārtha**: 4 dimensions of nominal meaning (meaning, gender, measure, number)
 - **Finite Operator Set**: All semantic relations derivable from finite primitives
 
-This 2500-year-old theory provides a **proven universal linguistic framework** that we adapt for AI semantic memory.
+**Positioning Statement**: We use Pāṇinian theory as:
+- ✅ The **inspiration and formal source** for our finite operator philosophy
+- ✅ A **structural template** for role-based event representation
+- ❌ NOT as **proof of correctness** (our claims must stand on their own formal merits)
+- ❌ NOT as a claim of **ancient validation** (modern evaluation required)
+
+The architectural contribution is evaluated independently; Pāṇini provides the conceptual vocabulary.
 
 ---
 
@@ -921,6 +929,58 @@ Sheaf-theoretic composition for multi-agent scenarios:
 2. **LLM-dependent extraction**: Quality varies with model
 3. **Manual identity hypotheses for now**: Automatic proposal is heuristic
 4. **Single-agent focus**: Multi-agent fusion deferred to v2.0
+
+## 5.5 Falsifiability: What Would Disprove This Architecture?
+
+We explicitly state conditions under which our core claims would be falsified:
+
+| Claim | Falsification Condition |
+|-------|------------------------|
+| **Binary Reduction** | An utterance class that cannot be reduced to Kriyā + meta-operators OR Prātipadikārtha + meta-operators |
+| **Identity-as-Hypothesis** | A domain where early-binding consistently outperforms late-binding with no error cost |
+| **Query Completeness** | A factual question that cannot be expressed via the finite interrogative set + quantifiers |
+| **Projection Distinctness (Φ₄ ≠ Φ₂)** | A case where synthesized knowledge is indistinguishable from observed knowledge in all meaningful respects |
+| **Self-Correction Soundness** | A contradiction resolution that creates new contradictions without termination |
+| **Decidability** | A well-formed query that does not terminate under the specified operators |
+
+**Commitment**: We will report any falsifying counter-examples discovered during evaluation.
+
+## 5.6 Concrete Failure Cases (Where the System Struggles)
+
+We acknowledge the following failure modes:
+
+### Failure Case 1: Implicit Identity Across Modalities
+
+**Scenario**: User points at an object while saying "that one"
+
+**Problem**: The system requires explicit identity between `Object_Pointed_At` and `that_one_referent`. If the transduction layer fails to produce this identity frame, the cross-modal reference is lost.
+
+**Current Mitigation**: Rely on external multi-modal fusion module
+**Honest Assessment**: This is a known gap
+
+### Failure Case 2: Confidence Calibration
+
+**Scenario**: Two sources with confidence 0.8 and 0.7 contribute to a projection
+
+**Problem**: The current confidence formula `c(F₄) = ∏ᵢ c(Fᵢ)` yields 0.56, which may be too pessimistic or optimistic depending on independence assumptions.
+
+**Honest Assessment**: Confidence calculus is heuristic, not principled. A Bayesian or Dempster-Shafer framework would be more rigorous.
+
+### Failure Case 3: High-Cardinality Entity Disambiguation
+
+**Scenario**: 500 mentions of "John" across 100 documents
+
+**Problem**: O(n²) pairwise identity frame generation is computationally expensive. The current architecture does not specify an efficient clustering strategy.
+
+**Honest Assessment**: Scalability engineering is needed for high-cardinality entity classes.
+
+### Failure Case 4: Adversarial Frame Injection
+
+**Scenario**: A malicious source injects high-confidence false frames
+
+**Problem**: The system currently trusts source-provided confidence. No adversarial robustness mechanism exists.
+
+**Honest Assessment**: Security model is out of scope for v1.0; required for deployment.
 
 ---
 
