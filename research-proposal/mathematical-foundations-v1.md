@@ -986,6 +986,122 @@ The results hold for systems satisfying axioms SC0-SC3. Extension to infinite sy
 
 ---
 
+# Part VI: Kriya Operator Theory
+
+This section formalizes the **state-transition operators (kriya)** that transform frames, establishing finiteness, composition boundedness, and termination guarantees.
+
+## 20. Kriya Definition
+
+**Definition 19 (State Transition Operator)**
+
+A kriya is a typed state-transition operator over frames:
+
+```
+K: F → F'
+
+where F = (O, I, D) is a frame
+```
+
+Kriya operators cause change; frames are static snapshots.
+
+## 21. Finite Primitive Kriya Basis
+
+**Definition 20 (Primitive Kriya Set)**
+
+Every sound dynamic system admits a finite primitive kriya set **K₀**:
+
+```
+K₀ = {ASSERT, RETRACT, UNIFY, SPLIT, INFER, OBSERVE, UPDATE, CORRECT}
+```
+
+| Primitive | Effect on Frame |
+|-----------|-----------------|
+| ASSERT(f) | O' = O ∪ {f} |
+| RETRACT(f) | O' = O \ {f} |
+| UNIFY(e₁, e₂) | I' = I ∪ {e₁ ≡ e₂} |
+| SPLIT(e₁, e₂) | I' = I \ {e₁ ≡ e₂} |
+| INFER | D' = ⊢(O, I) |
+| OBSERVE(x) | O' = O ∪ {x}, requires external input |
+| UPDATE(d, d') | D' = (D \ {d}) ∪ {d'} |
+| CORRECT(d) | Apply TraceBackAndCorrect(d) |
+
+**Theorem 13 (Finiteness of Primitive Basis)**
+
+*Any computably definable dynamic system has a finite primitive kriya set.*
+
+**Proof sketch**: By the same argument that ensures finite instruction sets are sufficient for universal computation (Turing completeness). An infinite primitive set would preclude effective enumeration. ∎
+
+## 22. Composite Kriya
+
+**Definition 21 (Composite Kriya)**
+
+Composite kriya are finite sequences of primitive applications:
+
+```
+K_complex = K_n ∘ K_{n-1} ∘ ... ∘ K_1
+
+F_n = K_n(K_{n-1}(...(K_1(F_0))...))
+```
+
+**Theorem 14 (Composition Boundedness)**
+
+*Although the set of composite kriya is infinite (by composition), each application:*
+1. Uses a finite primitive from K₀
+2. Has fixed arity (bounded arguments)
+3. Modifies a finite portion of the frame
+4. Has traceable provenance
+
+*Therefore, complexity analysis applies to primitive count, not semantic variety.*
+
+**Interpretation**: Infinite expressivity arises from composition, not new primitives—exactly like finite instruction sets generating infinite programs.
+
+## 23. Kāraka as Role Constraints
+
+**Definition 22 (Kāraka Role Typing)**
+
+For event-affecting kriya, arguments are typed by six Kāraka roles:
+
+```
+K_event(Kartā, Karma, Karaṇa, Sampradāna, Apādāna, Adhikaraṇa)
+```
+
+This ensures:
+- **Arity boundedness**: At most 6 semantic argument slots per event kriya
+- **Query compatibility**: Queries map to role projections
+- **Cross-domain uniformity**: Same roles across all event kriya
+
+## 24. Termination Guarantees
+
+**Theorem 15 (Query Termination)**
+
+*All queries over the frame graph terminate in finite time.*
+
+**Proof**:
+
+1. **Finite graph**: |V| nodes, |E| edges (both finite by construction)
+
+2. **Bounded traversal**:
+   - Temporal relations form a DAG (acyclic by time ordering)
+   - Identity graphs have finite transitive closure
+   - Queries are anchored (have explicit starting points)
+
+3. **Operator bounds**:
+   - σ (Select): O(|V|) — linear scan
+   - γ (Connect): O(|V|²) — transitive closure
+   - τ (Trace): O(1) — pointer lookup
+
+4. **No unbounded recursion**:
+   - Each Φ₅ (meta-trace) points only to Φ₁–Φ₄ frames
+   - No circular meta-level references
+
+**Total complexity**: O(|V|² × h_max) where h_max is bounded hierarchy depth.
+
+**Corollary 15.1 (Correction Termination)**
+
+*The TraceBackAndCorrect algorithm terminates in O(|Φ₃|) iterations, since each iteration removes at least one identity frame from a finite set.*
+
+---
+
 ## Appendix A: Notation Reference
 
 | Symbol | Definition |

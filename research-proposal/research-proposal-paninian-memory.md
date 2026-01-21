@@ -786,6 +786,71 @@ Output: Corrected graph
 
 **Guarantee**: Terminates in O(|Φ₃|) iterations; produces contradiction-free graph.
 
+### 3.5.1 The Impossibility Triangle
+
+The self-correction guarantee is not an engineering choice—it's a fundamental trade-off:
+
+```
+              Efficiency
+               (O(|I_d|))
+                  /\
+                 /  \
+                /    \
+               /      \
+              /________\
+    Completeness     Identity
+   (all errors)     Provenance
+
+Without identity provenance, you cannot have
+both efficiency AND completeness.
+```
+
+**Formal statement**: Any system that:
+1. Derives conclusions from premises
+2. Must correct false conclusions
+3. Operates with finite resources
+
+...must track identity provenance to achieve both efficient and complete correction. This is proven in `mathematical-foundations-v1.md`, Theorems 9-12.
+
+### 3.5.2 Database Schema (Reference Implementation)
+
+A concrete database schema for the frame graph:
+
+```sql
+-- Token table (atomic symbols)
+Token(id, type)
+-----------------
+r1   PERSON
+r2   PERSON
+m1   FOOD
+k1   ACTION
+
+-- Kriya (event) table
+Kriya(id, verb, time, source, confidence)
+-----------------------------------------
+k1   PLAY   t1   doc_A   0.95
+k2   EAT    t2   doc_B   0.92
+
+-- Participation table (Kāraka roles)
+Role(kriya_id, role, token_id)
+------------------------------
+k1   Kartā    r1
+k2   Kartā    r2
+k2   Karma    m1
+
+-- Identity table (retractable hypotheses)
+Identity(id1, id2, source, confidence, active)
+----------------------------------------------
+r1   r2   context_engine   0.85   true
+
+-- Temporal relations (DAG)
+Before(k_earlier, k_later)
+--------------------------
+k1   k2
+```
+
+**Key insight**: A frame is not a table—it's a **view** formed by joining these tables with the identity filter. If identity changes, the view changes; no data is rewritten.
+
 ## 3.6 Data Collection
 
 ### 3.6.1 Evaluation Corpora

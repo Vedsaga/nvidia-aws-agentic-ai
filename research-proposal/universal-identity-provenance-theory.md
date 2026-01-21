@@ -10,14 +10,16 @@
 
 Let C be a correction oracle that, given a false derivation d, identifies the minimal subset I' ⊆ I_d to retract.
 
-1. **Setup**: There are |I_d| identity assumptions supporting d. In the worst case, any subset could be the culprit.
+1. **Setup**: There are |I_d| identity assumptions supporting d. The correction oracle must identify which of these are responsible for the false conclusion.
 
-2. **Counting argument**: The number of possible minimal retractions is bounded by 2^|I_d| (each subset of I_d).
+2. **Distinguishability argument**: In the worst case, the oracle must distinguish between at least |I_d| mutually exclusive correction hypotheses (each identity assumption could independently be the culprit).
 
-3. **Information content**: To specify one element from a set of size 2^|I_d| requires:
+3. **Information content**: To distinguish one hypothesis from |I_d| alternatives requires:
    ```
-   H(correction) ≥ log₂(2^|I_d|) = |I_d| bits
+   H(correction) ≥ log₂|I_d| bits
    ```
+   
+   Note: We count distinguishable hypotheses, not arbitrary subsets—this gives a tighter, more defensible bound.
 
 4. **Communication complexity**: Any algorithm that corrects d without accessing identity provenance must:
    - Either examine all D derivations (to find which depend on the false assumption)
@@ -51,7 +53,9 @@ Assume ∃ efficient complete correction system S without identity provenance.
 2. Construct adversarial knowledge base K_m with:
    - |D| = 2^m derivations
    - Each derivation d_i depends on a unique subset I_i ⊆ I of size ≤ m
-   - Identity dependencies are cryptographically hidden (encoded)
+   - Identity dependencies are **indistinguishable under the observable interface** of S
+   
+   (Note: We do not assume adversarial encoding—only that the correction system's interface does not expose dependency structure. This is representation-independent.)
 
 3. **Diagonalization step**: 
    - For each derivation d_i, create false statement that requires retracting exactly I_i
@@ -207,6 +211,37 @@ Completeness  Provenance
 
 You can have any two, but not all three without the third.
 ```
+
+---
+
+## Universal Identity Provenance Theorem (Clean Form)
+
+The following representation-independent formulation does not assume SC0–SC3 explicitly:
+
+### Statement
+
+Let S be any computational system that:
+1. Derives conclusions from internal state
+2. Can identify and remove false conclusions
+3. Aims to preserve unrelated conclusions (local correction)
+
+Then **exactly one** of the following must hold:
+
+**(A)** The system explicitly or implicitly tracks **dependency-selective structure** (identity provenance), enabling correction in time proportional to the size of the dependency set: **O(|I_d|)**
+
+**(B)** The system lacks such structure, in which case any complete correction procedure requires **Ω(|D|)** inspection of derived state in the worst case.
+
+**There is no third option.**
+
+### Significance
+
+This theorem:
+- Does **not** assume axioms SC0–SC3
+- Does **not** assume a specific logic formalism
+- Does **not** assume classical computation
+- Applies to any system supporting local correction
+
+This is the representation-independent universality claim.
 
 ---
 
